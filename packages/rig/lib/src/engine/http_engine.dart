@@ -4,6 +4,8 @@ import 'dart:io';
 
 import '../errors.dart';
 import '../spec/container_spec.dart';
+import 'api_body.dart';
+import 'api_parse.dart';
 import 'docker_engine.dart';
 
 /// Talks to a Docker daemon over its unix domain socket.
@@ -172,14 +174,42 @@ final class HttpDockerEngine implements DockerEngine {
   Future<String> createContainer(
     ContainerSpec spec,
     Map<String, String> labels,
-  ) => throw UnimplementedError();
+  ) async {
+    final res = await _sendOk(
+      'POST',
+      '/containers/create',
+      body: buildCreateBody(spec, labels),
+    );
+    final json = jsonDecode(res.text);
+    if (json is! Map<String, Object?> || json['Id'] is! String) {
+      throw EngineError(
+        method: 'POST',
+        path: res.path,
+        statusCode: res.statusCode,
+        body: 'create returned no container id: ${res.text}',
+      );
+    }
+    return json['Id']! as String;
+  }
 
   @override
-  Future<void> startContainer(String id) => throw UnimplementedError();
+  Future<void> startContainer(String id) async {
+    final res = await _send('POST', '/containers/$id/start');
+    // 304 means it was already running, which is what the caller wanted.
+    if (res.statusCode == 304) return;
+    if (res.statusCode >= 400) {
+      throw EngineError(
+        method: 'POST',
+        path: res.path,
+        statusCode: res.statusCode,
+        body: res.text,
+      );
+    }
+  }
 
   @override
-  Future<ContainerInspect> inspectContainer(String id) =>
-      throw UnimplementedError();
+  Future<ContainerInspect> inspectContainer(String id) async =>
+      parseInspect(await _getJsonMap('/containers/$id/json'));
 
   @override
   Future<String> logTail(String id, {int lines = 50}) =>
