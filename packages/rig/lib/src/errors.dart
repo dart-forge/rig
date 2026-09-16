@@ -159,3 +159,17 @@ final class ContainerExited extends RigException {
     if (logTail.isEmpty) '  (no output)' else logTail,
   ].join('\n');
 }
+
+/// Another holder kept the lock for the whole timeout.
+final class LockTimeout extends RigException {
+  const LockTimeout({required this.lockPath, required this.waited});
+
+  final String lockPath;
+  final Duration waited;
+
+  @override
+  String get message =>
+      'Waited ${waited.inSeconds}s for another test to finish starting a '
+      'shared container, and it did not.\n\n'
+      'The lock is $lockPath. If no tests are running, delete it.';
+}
