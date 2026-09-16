@@ -24,12 +24,15 @@ void main() {
     healthcheck: Healthcheck(test: ['CMD', 'true']),
   );
 
+  // Nothing in these cases needs real time to pass: the fake's health
+  // transition is driven by the number of polls, not by the clock.
   Future<AcquiredContainer> acquire([ContainerSpec s = spec]) =>
       acquireContainer(
         spec: s,
-        engine: _InstantlyHealthy(engine),
+        engine: engine,
         stateDir: state,
         project: 'aim_postgres',
+        sleep: (_) async {},
       );
 
   group('when nothing exists yet', () {
@@ -185,6 +188,8 @@ void main() {
       healthcheck: Healthcheck(test: ['CMD', 'false']),
     );
 
+    setUp(() => engine.healthAfterCreate = const [HealthStatus.starting]);
+
     test('rethrows and leaves a marker naming the container', () async {
       await expectLater(acquire(unhealthy), throwsA(isA<ReadyTimeout>()));
 
@@ -214,100 +219,47 @@ void main() {
     });
   });
 
-  test('the lock is released before readiness is awaited', () async {
-    // Evidence the wait happens outside the lock: if readiness were awaited
-    // while holding it, the second caller would queue behind the first.
-    final slow = ContainerSpec(
-      image: 'postgres:16-alpine',
-      exposedPorts: const [5432],
-      waitFor: const WaitFor.healthy(),
-      healthcheck: const Healthcheck(test: ['CMD', 'true']),
-    );
+  test('two concurrent acquires of one spec share a container', () async {
     engine.addContainer(
       labels: {
         rigMarkerLabel: '1',
-        rigHashLabel: specHash(slow),
+        rigHashLabel: specHash(spec),
         rigLifetimeLabel: 'shared',
       },
       hostPorts: {5432: 55003},
       health: [HealthStatus.healthy],
     );
 
-    final both = await Future.wait([acquire(slow), acquire(slow)]);
+    final both = await Future.wait([acquire(), acquire()]);
 
     expect(both[0].containerId, both[1].containerId);
     expect(engine.calls.where((c) => c == 'create'), isEmpty);
   });
-}
 
-/// Makes a freshly created container's healthcheck resolve the way its own
-/// trivial probe says it should, instead of sitting at [HealthStatus.starting]
-/// forever.
-///
-/// [FakeDockerEngine] only advances a container's health when a test calls
-/// `queueHealth` on it explicitly, which existing containers set up through
-/// `addContainer` can do because their id is known before `acquireContainer`
-/// runs. A container this suite creates has no such moment: its id only
-/// exists once `acquireContainer` is already inside the create-and-start
-/// call. This decorator is the substitute for that missing `queueHealth`
-/// call, interpreting the spec's own `CMD true` / `CMD false` probe the way
-/// a real health check would.
-final class _InstantlyHealthy implements DockerEngine {
-  _InstantlyHealthy(this._inner);
+  test('the lock is not held while readiness is awaited', () async {
+    // Observed directly rather than inferred from timing. The only sleeping
+    // this call does is inside the readiness poll — the lock's own retry loop
+    // never sleeps when the lock is free — so if the lock file exists at that
+    // moment, readiness is being awaited while holding it, which would stall
+    // every other suite for the length of the wait.
+    var lockHeldDuringWait = false;
 
-  final FakeDockerEngine _inner;
+    await acquireContainer(
+      spec: spec,
+      engine: engine,
+      stateDir: state,
+      project: 'aim_postgres',
+      sleep: (_) async {
+        if (Link(state.lockPath(specHash(spec))).existsSync()) {
+          lockHeldDuringWait = true;
+        }
+      },
+    );
 
-  @override
-  Future<String> createContainer(
-    ContainerSpec spec,
-    Map<String, String> labels,
-  ) async {
-    final id = await _inner.createContainer(spec, labels);
-    final probe = spec.healthcheck?.test;
-    if (probe != null && probe.isNotEmpty && probe.last == 'true') {
-      _inner.queueHealth(id, [HealthStatus.healthy]);
-    }
-    return id;
-  }
-
-  @override
-  Future<void> ping() => _inner.ping();
-
-  @override
-  Future<EngineVersion> version() => _inner.version();
-
-  @override
-  Future<bool> imageExists(String image) => _inner.imageExists(image);
-
-  @override
-  Future<void> pullImage(String image) => _inner.pullImage(image);
-
-  @override
-  Future<List<ContainerSummary>> listContainers({
-    Map<String, List<String>> filters = const {},
-    bool all = true,
-  }) => _inner.listContainers(filters: filters, all: all);
-
-  @override
-  Future<void> startContainer(String id) => _inner.startContainer(id);
-
-  @override
-  Future<ContainerInspect> inspectContainer(String id) =>
-      _inner.inspectContainer(id);
-
-  @override
-  Future<String> logTail(String id, {int lines = 50}) =>
-      _inner.logTail(id, lines: lines);
-
-  @override
-  Future<void> stopContainer(
-    String id, {
-    Duration timeout = const Duration(seconds: 10),
-  }) => _inner.stopContainer(id, timeout: timeout);
-
-  @override
-  Future<void> removeContainer(String id) => _inner.removeContainer(id);
-
-  @override
-  Future<void> close() => _inner.close();
+    expect(
+      lockHeldDuringWait,
+      isFalse,
+      reason: 'the lock must cover create and start only',
+    );
+  });
 }

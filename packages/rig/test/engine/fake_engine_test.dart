@@ -60,10 +60,41 @@ void main() {
     expect((await engine.inspectContainer(id)).health, HealthStatus.healthy);
   });
 
-  test('reports no health when none was queued', () async {
+  test('reports no health when the spec has no healthcheck', () async {
     final id = await engine.createContainer(spec, const {});
 
     expect((await engine.inspectContainer(id)).health, HealthStatus.none);
+  });
+
+  test('a created container with a healthcheck reaches healthy', () async {
+    // Staying at `starting` forever would make every caller that waits on
+    // health time out against the fake while working against Docker.
+    const withProbe = ContainerSpec(
+      image: 'postgres:16-alpine',
+      exposedPorts: [5432],
+      waitFor: WaitFor.healthy(),
+      healthcheck: Healthcheck(test: ['CMD', 'true']),
+    );
+
+    final id = await engine.createContainer(withProbe, const {});
+
+    expect((await engine.inspectContainer(id)).health, HealthStatus.starting);
+    expect((await engine.inspectContainer(id)).health, HealthStatus.healthy);
+    expect((await engine.inspectContainer(id)).health, HealthStatus.healthy);
+  });
+
+  test('a created container can be made to stay unhealthy', () async {
+    const withProbe = ContainerSpec(
+      image: 'postgres:16-alpine',
+      waitFor: WaitFor.healthy(),
+      healthcheck: Healthcheck(test: ['CMD', 'false']),
+    );
+    engine.healthAfterCreate = const [HealthStatus.starting];
+
+    final id = await engine.createContainer(withProbe, const {});
+
+    expect((await engine.inspectContainer(id)).health, HealthStatus.starting);
+    expect((await engine.inspectContainer(id)).health, HealthStatus.starting);
   });
 
   test('lists containers filtered by label', () async {

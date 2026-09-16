@@ -38,6 +38,19 @@ final class FakeDockerEngine implements DockerEngine {
   /// The first host port handed out; incremented per published port.
   int nextHostPort = 40000;
 
+  /// What a container created through [createContainer] reports for health,
+  /// in order, holding the last value once exhausted.
+  ///
+  /// The fake does not run probes, so a test states what the probe would do.
+  /// The default passes through `starting` once and then reports healthy,
+  /// which is what Docker does when a probe starts succeeding. A test whose
+  /// container must never become usable sets this to `[HealthStatus.starting]`
+  /// so it stays there.
+  List<HealthStatus> healthAfterCreate = const [
+    HealthStatus.starting,
+    HealthStatus.healthy,
+  ];
+
   final Map<String, _FakeContainer> _containers = {};
   int _nextId = 1;
 
@@ -138,7 +151,7 @@ final class FakeDockerEngine implements DockerEngine {
       labels: Map.of(labels),
       created: DateTime.utc(2026, 1, 1),
       hostPorts: {for (final port in spec.exposedPorts) port: nextHostPort++},
-      health: spec.healthcheck == null ? [] : [HealthStatus.starting],
+      health: spec.healthcheck == null ? [] : [...healthAfterCreate],
       logs: '',
     );
     return id;
