@@ -9,3 +9,5 @@ export 'src/spec/labels.dart';
 export 'src/wait/ready.dart';
 export 'src/lease/acquire.dart';
 export 'src/lease/state_dir.dart';
+export 'src/lease/container_lease.dart';
+export 'src/testing.dart';

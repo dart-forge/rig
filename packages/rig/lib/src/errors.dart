@@ -160,6 +160,25 @@ final class ContainerExited extends RigException {
   ].join('\n');
 }
 
+/// A port was read that the spec never published.
+final class PortNotPublished extends RigException {
+  const PortNotPublished({
+    required this.containerPort,
+    required this.published,
+  });
+
+  final int containerPort;
+  final List<int> published;
+
+  @override
+  String get message => published.isEmpty
+      ? 'Port $containerPort is not published, and neither is any other. '
+            'Add it to the spec: exposedPorts: [$containerPort].'
+      : 'Port $containerPort is not published. This container publishes '
+            '${published.join(', ')}. Add it to the spec: '
+            'exposedPorts: [${[...published, containerPort].join(', ')}].';
+}
+
 /// Another holder kept the lock for the whole timeout.
 final class LockTimeout extends RigException {
   const LockTimeout({required this.lockPath, required this.waited});
