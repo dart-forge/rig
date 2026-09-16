@@ -47,7 +47,7 @@ Future<T> withExclusiveLock<T>(
 
     final held = _readTarget(link);
     if (held == null || _isStale(held, now(), staleAfter)) {
-      _breakIfUnchanged(link, held);
+      breakStaleLockIfUnchanged(link, held);
     } else if (!now().isBefore(deadline)) {
       throw LockTimeout(lockPath: lockPath, waited: timeout);
     } else {
@@ -69,13 +69,18 @@ bool _tryCreate(Link link, DateTime at) {
 
 /// Identifies one holder. The random token matters: two isolates in one
 /// process share a pid, and without it two holders could write the same
-/// marker — which would defeat the comparison in [_breakIfUnchanged].
+/// marker — which would defeat the comparison in [breakStaleLockIfUnchanged].
 String _marker(DateTime at) =>
     'held-at:${at.toUtc().toIso8601String()}'
     '|pid:$pid'
     '|token:${_tokens.nextInt(1 << 32).toRadixString(16)}';
 
 /// Removes the lock, but only while it still carries exactly [observed].
+///
+/// Not private so that rig's own tests can drive the interleaving directly.
+/// Reproducing it through two real isolates turned out not to be reliable —
+/// isolate startup jitter is wider than the window — so the decision is
+/// tested as a function instead of raced.
 ///
 /// The comparison is the point. Deleting by path alone lets a caller that
 /// judged a lock stale delete the *fresh* lock a faster caller created in the
@@ -88,7 +93,7 @@ String _marker(DateTime at) =>
 /// remains. Its worst outcome is two callers each creating a container for
 /// the same spec, which leaves one spare for `rig prune` rather than giving
 /// either caller the wrong container.
-void _breakIfUnchanged(Link link, String? observed) {
+void breakStaleLockIfUnchanged(Link link, String? observed) {
   if (_readTarget(link) != observed) return;
   _release(link);
 }

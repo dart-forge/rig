@@ -112,47 +112,52 @@ void main() {
     expect(result, 'took over');
   });
 
-  test(
-    'two waiters racing on the same stale lock do not both get in',
-    () async {
-      // The bug this pins: both waiters judge the same marker stale, the first
-      // deletes it and creates its own, and the second — still acting on the
-      // judgement it made a moment earlier — deletes that fresh lock by path
-      // and walks in alongside.
+  group('breaking a stale lock', () {
+    // The race these pin: two waiters judge the same marker stale, the first
+    // deletes it and creates its own, and the second — still acting on the
+    // judgement it made a moment earlier — deletes that fresh lock and walks
+    // in alongside. Driving the decision directly makes the interleaving
+    // exact; racing two isolates does not reach the window reliably.
+    const stale = 'held-at:2020-01-01T00:00:00.000Z|pid:1|token:dead';
+    const fresh = 'held-at:2026-09-16T00:00:00.000Z|pid:2|token:beef';
+
+    test('removes it while it is still the lock that was judged', () {
       Link(lockPath)
         ..parent.createSync(recursive: true)
-        ..createSync('held-at:2020-01-01T00:00:00.000Z|pid:1|token:dead');
+        ..createSync(stale);
 
-      final held = <List<int>>[];
-      final done = <Future<void>>[];
+      breakStaleLockIfUnchanged(Link(lockPath), stale);
 
-      for (var i = 0; i < 2; i++) {
-        final receiver = ReceivePort();
-        final finished = Completer<void>();
-        receiver.listen((message) {
-          held.add((message as List).cast<int>());
-          receiver.close();
-          finished.complete();
-        });
-        await Isolate.spawn(lockHolder, (receiver.sendPort, lockPath));
-        done.add(finished.future);
-      }
+      expect(Link(lockPath).existsSync(), isFalse);
+    });
 
-      await Future.wait(done);
+    test('leaves it alone once someone else has taken the lock', () {
+      Link(lockPath)
+        ..parent.createSync(recursive: true)
+        ..createSync(stale);
+      // A faster waiter broke the stale lock and took it.
+      Link(lockPath).deleteSync();
+      Link(lockPath).createSync(fresh);
 
-      expect(held, hasLength(2));
-      final [first, second] = held;
-      final overlapped = first[0] < second[1] && second[0] < first[1];
+      breakStaleLockIfUnchanged(Link(lockPath), stale);
+
       expect(
-        overlapped,
-        isFalse,
-        reason:
-            'both waiters broke the same stale lock and entered together: '
-            'held $first and $second',
+        Link(lockPath).existsSync(),
+        isTrue,
+        reason: 'that lock belongs to whoever created it, not to us',
       );
-    },
-    timeout: const Timeout(Duration(seconds: 30)),
-  );
+      expect(Link(lockPath).targetSync(), fresh);
+    });
+
+    test('is a no-op when the lock is already gone', () {
+      Directory(p.dirname(lockPath)).createSync(recursive: true);
+
+      expect(
+        () => breakStaleLockIfUnchanged(Link(lockPath), stale),
+        returnsNormally,
+      );
+    });
+  });
 
   test('does not take over a fresh lock, and times out instead', () async {
     Link(lockPath)
