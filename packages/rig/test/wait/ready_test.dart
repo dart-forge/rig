@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:rig/engine.dart';
 import 'package:rig/fake_engine.dart';
 import 'package:rig/rig.dart';
+import 'package:rig/src/wait/ready.dart';
 import 'package:test/test.dart';
 
 /// A clock that only moves when something sleeps, so timeouts are tested

@@ -8,3 +8,5 @@ export 'src/engine/connect.dart';
 export 'src/engine/current.dart';
 export 'src/engine/docker_engine.dart';
 export 'src/spec/labels.dart';
+export 'src/lease/acquire.dart';
+export 'src/spec/spec_hash.dart';

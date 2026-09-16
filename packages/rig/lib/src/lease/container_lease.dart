@@ -1,3 +1,5 @@
+import 'package:meta/meta.dart';
+
 import '../engine/docker_engine.dart';
 import '../errors.dart';
 import '../spec/container_spec.dart';
@@ -14,9 +16,19 @@ final class ContainerLease {
   ///
   /// [engineOf] is called lazily because the engine is connected in that same
   /// `setUpAll`, after this lease has already been handed to the caller.
+  ///
+  /// Module and `useContainer` plumbing, not for a test to call: its
+  /// signature names [DockerEngine] and [AcquiredContainer], which the
+  /// stable `rig` library does not export.
+  @internal
   ContainerLease.pending(this._engineOf);
 
   /// A lease over a container that is already running.
+  ///
+  /// Module and `useContainer` plumbing, not for a test to call: its
+  /// signature names [DockerEngine] and [AcquiredContainer], which the
+  /// stable `rig` library does not export.
+  @internal
   ContainerLease.of(DockerEngine engine, AcquiredContainer acquired)
     : _engineOf = (() => engine),
       _acquired = acquired;
@@ -26,6 +38,7 @@ final class ContainerLease {
   bool _released = false;
 
   /// Attaches the acquired container. Called by `useContainer`.
+  @internal
   void bind(AcquiredContainer acquired) => _acquired = acquired;
 
   /// The address to connect to.

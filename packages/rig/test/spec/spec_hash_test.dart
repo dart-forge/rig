@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:rig/engine.dart';
 import 'package:rig/rig.dart';
 import 'package:test/test.dart';
 

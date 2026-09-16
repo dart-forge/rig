@@ -1,3 +1,4 @@
+import 'package:rig/engine.dart';
 import 'package:rig/rig.dart';
 import 'package:test/test.dart';
 
