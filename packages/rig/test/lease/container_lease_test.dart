@@ -102,6 +102,30 @@ void main() {
       expect(engine.calls, ['stop:$id', 'remove:$id']);
     });
 
+    test('reports the same failure again on retry, rather than a silent '
+        'no-op that leaves the container stopped but never removed', () async {
+      final id = engine.addContainer(labels: const {});
+      final lease = ContainerLease.of(
+        engine,
+        acquired(id: id, lifetime: Lifetime.dedicated),
+      );
+      engine.removeError = StateError('boom');
+
+      await expectLater(lease.release(), throwsA(isA<StateError>()));
+      await expectLater(
+        lease.release(),
+        throwsA(isA<StateError>()),
+        reason:
+            'a caller retrying after a real failure must be told again, '
+            'not handed a false success',
+      );
+
+      expect(engine.calls, [
+        'stop:$id',
+        'remove:$id',
+      ], reason: 'one attempt, reported twice — not one attempt per call');
+    });
+
     test('does nothing when the container was never acquired', () async {
       await expectLater(
         ContainerLease.pending(() => engine).release(),

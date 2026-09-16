@@ -31,6 +31,9 @@ final class FakeDockerEngine implements DockerEngine {
   bool pullSucceeds = true;
   String pullFailureDetail = 'manifest unknown';
 
+  /// When set, [removeContainer] throws it instead of removing anything.
+  Object? removeError;
+
   /// The last [createContainer] arguments, for assertions.
   ContainerSpec? lastCreatedSpec;
   Map<String, String>? lastCreatedLabels;
@@ -196,6 +199,8 @@ final class FakeDockerEngine implements DockerEngine {
   @override
   Future<void> removeContainer(String id) async {
     calls.add('remove:$id');
+    final error = removeError;
+    if (error != null) throw error;
     _containers.remove(id);
   }
 

@@ -35,7 +35,7 @@ final class ContainerLease {
 
   final DockerEngine Function() _engineOf;
   AcquiredContainer? _acquired;
-  bool _released = false;
+  Future<void>? _releasing;
 
   /// Attaches the acquired container. Called by `useContainer`.
   @internal
@@ -77,16 +77,26 @@ final class ContainerLease {
   /// running: the next run reuses it instead of paying for startup, and
   /// deciding "am I the last user" is not answerable when suites run in
   /// parallel isolates.
-  Future<void> release() async {
+  ///
+  /// Safe to call more than once, including concurrently. The in-flight
+  /// future is cached rather than a flag set before the awaits below: a flag
+  /// set that early would make a *retry* after a real failure in
+  /// [DockerEngine.removeContainer] look like it had succeeded, leaving a
+  /// stopped-but-present container that nothing ever removes. Caching the
+  /// future instead means a second call gets the same outcome the first one
+  /// had — success or the original failure — rather than a false "done".
+  Future<void> release() {
     final acquired = _acquired;
-    if (acquired == null || _released) return;
-    _released = true;
-
-    if (acquired.lifetime == Lifetime.dedicated) {
-      final engine = _engineOf();
-      await engine.stopContainer(acquired.containerId);
-      await engine.removeContainer(acquired.containerId);
+    if (acquired == null || acquired.lifetime != Lifetime.dedicated) {
+      return Future.value();
     }
+    return _releasing ??= _doRelease(acquired);
+  }
+
+  Future<void> _doRelease(AcquiredContainer acquired) async {
+    final engine = _engineOf();
+    await engine.stopContainer(acquired.containerId);
+    await engine.removeContainer(acquired.containerId);
   }
 
   AcquiredContainer _require() {
