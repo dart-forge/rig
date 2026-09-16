@@ -692,6 +692,75 @@ void main() {
     });
   });
 
+  group('request timeouts', () {
+    test('never waits forever: a stalled request becomes EngineError naming '
+        'the endpoint and the budget', () async {
+      server.on(
+        'POST',
+        '/v1.44/containers/abc/start',
+        status: 204,
+        delay: const Duration(milliseconds: 300),
+      );
+      final bounded = HttpDockerEngine(
+        socketPath: socketPath,
+        requestTimeout: const Duration(milliseconds: 50),
+      );
+      addTearDown(bounded.close);
+
+      await expectLater(
+        bounded.startContainer('abc'),
+        throwsA(
+          isA<EngineError>()
+              .having((e) => e.path, 'path', contains('/containers/abc/start'))
+              .having((e) => e.message, 'message', contains('50')),
+        ),
+      );
+    });
+
+    test('a pull gets its own, separate timeout budget', () async {
+      server.on(
+        'POST',
+        '/v1.44/images/create',
+        delay: const Duration(milliseconds: 300),
+      );
+      final bounded = HttpDockerEngine(
+        socketPath: socketPath,
+        requestTimeout: const Duration(seconds: 30),
+        pullTimeout: const Duration(milliseconds: 50),
+      );
+      addTearDown(bounded.close);
+
+      await expectLater(
+        bounded.pullImage('x:1'),
+        throwsA(
+          isA<ImagePullFailed>().having(
+            (e) => e.message,
+            'message',
+            contains('50'),
+          ),
+        ),
+      );
+    });
+
+    test(
+      'ping reports DockerUnavailable, not EngineError, when it stalls',
+      () async {
+        server.on(
+          'GET',
+          '/v1.44/_ping',
+          delay: const Duration(milliseconds: 300),
+        );
+        final bounded = HttpDockerEngine(
+          socketPath: socketPath,
+          requestTimeout: const Duration(milliseconds: 50),
+        );
+        addTearDown(bounded.close);
+
+        await expectLater(bounded.ping(), throwsA(isA<DockerUnavailable>()));
+      },
+    );
+  });
+
   group('connectToDocker', () {
     // DOCKER_HOST points at the fake server's socket, which exists, so
     // discovery stops there and never reaches the well-known paths — these

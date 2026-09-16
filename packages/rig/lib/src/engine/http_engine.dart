@@ -19,9 +19,12 @@ import 'log_frames.dart';
 /// Dart can do this with no extra dependency: `HttpClient.connectionFactory`
 /// accepts a unix socket, so `dart:io` is the whole HTTP client.
 final class HttpDockerEngine implements DockerEngine {
-  HttpDockerEngine({required String socketPath, this.host = '127.0.0.1'})
-    : _socketPath = socketPath,
-      _client = HttpClient() {
+  HttpDockerEngine({
+    required String socketPath,
+    this.requestTimeout = const Duration(seconds: 30),
+    this.pullTimeout = const Duration(seconds: 300),
+  }) : _socketPath = socketPath,
+       _client = HttpClient() {
     _client.connectionFactory = (uri, proxyHost, proxyPort) =>
         Socket.startConnect(
           InternetAddress(socketPath, type: InternetAddressType.unix),
@@ -33,8 +36,15 @@ final class HttpDockerEngine implements DockerEngine {
   /// as the daemon's newest API and would silently follow breaking changes.
   static const String apiVersion = 'v1.44';
 
-  /// The address a test should connect to for a published port.
-  final String host;
+  /// How long any request other than a pull may take before it is treated
+  /// as failed. A daemon that accepts the socket and then never answers is
+  /// the exact failure mode rig exists to remove, so nothing here waits
+  /// unbounded.
+  final Duration requestTimeout;
+
+  /// A pull needs its own, much longer budget: a cold pull of a real image
+  /// routinely takes minutes, not seconds.
+  final Duration pullTimeout;
 
   final String _socketPath;
   final HttpClient _client;
@@ -53,6 +63,12 @@ final class HttpDockerEngine implements DockerEngine {
       throw DockerUnavailable(searched: [_socketPath], cause: e.message);
     } on HttpException catch (e) {
       throw DockerUnavailable(searched: [_socketPath], cause: e.message);
+    } on EngineError catch (e) {
+      // The only way _send throws EngineError from ping's own request is the
+      // timeout below: the daemon accepted the socket and then never
+      // answered, which is DockerUnavailable's story to tell, not this
+      // method's own contract of "the daemon answered with an error".
+      throw DockerUnavailable(searched: [_socketPath], cause: e.body);
     }
   }
 
@@ -86,7 +102,39 @@ final class HttpDockerEngine implements DockerEngine {
     String method,
     String path, {
     Object? body,
+    Duration? timeout,
   }) async {
+    final budget = timeout ?? requestTimeout;
+    final fullPath = '/$apiVersion$path';
+    try {
+      return await _sendOnce(method, path, fullPath, body).timeout(budget);
+    } on TimeoutException {
+      // Never an unbounded wait: a daemon that accepted the socket and then
+      // never answered becomes an error naming the request and how long rig
+      // waited, not a hang. Callers with a more specific contract (ping,
+      // pullImage) translate this into their own exception type.
+      throw EngineError(
+        method: method,
+        path: fullPath,
+        statusCode: 0,
+        body: 'Docker did not respond within ${_formatDuration(budget)}',
+      );
+    }
+  }
+
+  /// Whole seconds where that is exact, milliseconds otherwise — so a
+  /// production-sized budget (30s, 300s) reads naturally and a short budget
+  /// in a test is not rounded down to "0s".
+  static String _formatDuration(Duration d) => d.inMilliseconds % 1000 == 0
+      ? '${d.inSeconds}s'
+      : '${d.inMilliseconds}ms';
+
+  Future<_EngineResponse> _sendOnce(
+    String method,
+    String path,
+    String fullPath,
+    Object? body,
+  ) async {
     final uri = Uri.parse('http://localhost/$apiVersion$path');
     final request = await _client.openUrl(method, uri);
     if (body != null) {
@@ -104,7 +152,7 @@ final class HttpDockerEngine implements DockerEngine {
       statusCode: response.statusCode,
       bytes: bytes,
       method: method,
-      path: '/$apiVersion$path',
+      path: fullPath,
     );
   }
 
@@ -272,7 +320,18 @@ final class HttpDockerEngine implements DockerEngine {
   Future<void> pullImage(String image) async {
     final ref = splitImageRef(image);
     final query = {'fromImage': ref.name, 'tag': ref.tag};
-    final res = await _send('POST', '/images/create?${_query(query)}');
+    final _EngineResponse res;
+    try {
+      res = await _send(
+        'POST',
+        '/images/create?${_query(query)}',
+        timeout: pullTimeout,
+      );
+    } on EngineError catch (e) {
+      // Only reachable via _send's own timeout on this request; a pull
+      // failure gets ImagePullFailed's advice, not EngineError's.
+      throw ImagePullFailed(image: image, detail: e.body);
+    }
 
     if (res.statusCode >= 400) {
       throw ImagePullFailed(image: image, detail: res.text);

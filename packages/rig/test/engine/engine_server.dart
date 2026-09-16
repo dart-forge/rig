@@ -51,6 +51,7 @@ final class FakeEngineServer {
     int status = 200,
     Object? json,
     String? body,
+    Duration delay = Duration.zero,
   }) {
     _routes.insert(
       0,
@@ -60,6 +61,7 @@ final class FakeEngineServer {
         status: status,
         body: body ?? (json == null ? '' : jsonEncode(json)),
         isJson: json != null,
+        delay: delay,
       ),
     );
   }
@@ -87,6 +89,10 @@ final class FakeEngineServer {
         ),
       );
 
+      if (route.delay > Duration.zero) {
+        await Future<void>.delayed(route.delay);
+      }
+
       request.response.statusCode = route.status;
       if (route.isJson) {
         request.response.headers.contentType = ContentType.json;
@@ -110,6 +116,7 @@ final class _Route {
     required this.status,
     required this.body,
     required this.isJson,
+    this.delay = Duration.zero,
   });
 
   final String method;
@@ -117,4 +124,5 @@ final class _Route {
   final int status;
   final String body;
   final bool isJson;
+  final Duration delay;
 }
