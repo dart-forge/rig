@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:test/test.dart';
 
 import 'engine/current.dart';
@@ -7,10 +9,9 @@ import 'lease/container_lease.dart';
 import 'lease/state_dir.dart';
 import 'project.dart';
 import 'spec/container_spec.dart';
-import 'spec/labels.dart';
+import 'warn_threshold.dart';
 
-/// Warn once the machine is holding this many rig containers.
-const int defaultWarnAboveContainers = 20;
+export 'warn_threshold.dart' show defaultWarnAboveContainers;
 
 bool _warned = false;
 
@@ -34,11 +35,14 @@ bool _warned = false;
 ///
 /// [stateDir] is rarely worth setting; it exists so a CI job can point rig's
 /// locks somewhere it controls.
+///
+/// The piling-up warning below this many containers is not a parameter here:
+/// set `RIG_WARN_ABOVE` in the environment instead, since it is a
+/// machine-wide concern, not a per-call one.
 ContainerLease useContainer(
   ContainerSpec spec, {
   String? project,
   StateDir? stateDir,
-  int warnAboveContainers = defaultWarnAboveContainers,
 }) {
   // Connected in setUpAll, which runs after this function has returned, so
   // the lease reaches for it lazily.
@@ -56,7 +60,7 @@ ContainerLease useContainer(
         project: project ?? currentProjectName(),
       ),
     );
-    await _warnIfPilingUp(connected, warnAboveContainers);
+    await _warnIfPilingUp(connected, warnThreshold(Platform.environment));
   });
 
   tearDownAll(lease.release);
@@ -71,11 +75,7 @@ Future<void> _warnIfPilingUp(DockerEngine engine, int threshold) async {
   _warned = true;
 
   try {
-    final all = await engine.listContainers(
-      filters: {
-        'label': [rigMarkerLabel],
-      },
-    );
+    final all = await rigContainers(engine);
     if (all.length > threshold) {
       // ignore: avoid_print
       print(

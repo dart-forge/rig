@@ -96,6 +96,49 @@ final class ContainerSpec {
   final String? networkMode;
   final Healthcheck? healthcheck;
   final Lifetime lifetime;
+
+  /// A copy of this spec with the given fields replaced.
+  ///
+  /// [ContainerSpec] is const-constructible so it can be shared and hashed,
+  /// which means a shared `const` spec cannot be tweaked in place. The
+  /// motivating case is flipping [lifetime] for one suite — a connection
+  /// pool test that must not share its container — without repeating every
+  /// other field.
+  ContainerSpec copyWith({
+    String? image,
+    WaitFor? waitFor,
+    Map<String, String>? env,
+    List<String>? command,
+    List<String>? entrypoint,
+    List<int>? exposedPorts,
+    Set<String>? tmpfs,
+    List<Mount>? mounts,
+    Map<String, String>? labels,
+    String? user,
+    String? workingDir,
+    bool? privileged,
+    String? networkMode,
+    Healthcheck? healthcheck,
+    Lifetime? lifetime,
+  }) {
+    return ContainerSpec(
+      image: image ?? this.image,
+      waitFor: waitFor ?? this.waitFor,
+      env: env ?? this.env,
+      command: command ?? this.command,
+      entrypoint: entrypoint ?? this.entrypoint,
+      exposedPorts: exposedPorts ?? this.exposedPorts,
+      tmpfs: tmpfs ?? this.tmpfs,
+      mounts: mounts ?? this.mounts,
+      labels: labels ?? this.labels,
+      user: user ?? this.user,
+      workingDir: workingDir ?? this.workingDir,
+      privileged: privileged ?? this.privileged,
+      networkMode: networkMode ?? this.networkMode,
+      healthcheck: healthcheck ?? this.healthcheck,
+      lifetime: lifetime ?? this.lifetime,
+    );
+  }
 }
 
 /// A spec reduced to a canonical, order-independent form.

@@ -1,4 +1,6 @@
+import 'package:rig/engine.dart';
 import 'package:rig/rig.dart';
+import 'package:rig/src/spec/container_spec.dart' show normalizeSpec;
 import 'package:test/test.dart';
 
 void main() {
@@ -12,6 +14,42 @@ void main() {
       );
       expect(spec.image, 'redis:7-alpine');
       expect(spec.lifetime, Lifetime.shared, reason: 'sharing is the default');
+    });
+  });
+
+  group('copyWith', () {
+    test('overrides only the given fields', () {
+      const base = ContainerSpec(
+        image: 'redis:7-alpine',
+        exposedPorts: [6379],
+        waitFor: WaitFor.port(6379),
+      );
+
+      final dedicated = base.copyWith(lifetime: Lifetime.dedicated);
+
+      expect(dedicated.lifetime, Lifetime.dedicated);
+      expect(dedicated.image, base.image);
+      expect(dedicated.exposedPorts, base.exposedPorts);
+      expect(dedicated.waitFor, base.waitFor);
+    });
+
+    test('leaves the original spec untouched', () {
+      const base = ContainerSpec(image: 'x', waitFor: WaitFor.healthy());
+
+      base.copyWith(lifetime: Lifetime.dedicated);
+
+      expect(base.lifetime, Lifetime.shared);
+    });
+
+    test('can flip a shared const spec to dedicated for one suite', () {
+      // The motivating case: a connection-pool test needs its own
+      // container without duplicating the whole spec to change one enum.
+      const shared = ContainerSpec(image: 'x', waitFor: WaitFor.healthy());
+
+      final own = shared.copyWith(lifetime: Lifetime.dedicated);
+
+      expect(specHash(own), specHash(shared), reason: 'still the same image');
+      expect(own.lifetime, isNot(shared.lifetime));
     });
   });
 
