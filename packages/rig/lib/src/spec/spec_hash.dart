@@ -17,17 +17,16 @@ const int defaultMaxMountBytes = 1 << 20;
 /// a certificate must stop matching the running container the moment that
 /// certificate is replaced — otherwise the old one keeps serving and the
 /// failure has no visible cause.
+///
+/// The canonical lines carry a mount's container path and access mode but not
+/// its host path, so nothing here needs to filter them: the two halves of a
+/// mount's identity are declared in one place each.
 String specHash(
   ContainerSpec spec, {
   int maxMountBytes = defaultMaxMountBytes,
 }) {
   final lines = [
-    // The canonical `mount=` line carries the raw host path, which is not
-    // part of what the container ends up seeing. Drop it here and rely on
-    // the content-keyed lines below instead, so identical content mounted
-    // from a different host path still hashes the same.
-    ...normalizeSpec(spec).canonicalLines
-        .where((line) => !line.startsWith('mount=')),
+    ...normalizeSpec(spec).canonicalLines,
     ..._mountContentLines(spec, maxMountBytes),
   ];
   final digest = sha256.convert(utf8.encode(_unambiguous(lines)));
@@ -61,8 +60,7 @@ List<String> _mountContentLines(ContainerSpec spec, int maxBytes) {
 
   return [
     for (final mount in sorted)
-      'mount.content=${mount.containerPath}:${mount.readOnly ? 'ro' : 'rw'}'
-          '=${_digestOf(mount.hostPath, maxBytes)}',
+      'mount.content=${mount.containerPath}=${_digestOf(mount.hostPath, maxBytes)}',
   ];
 }
 

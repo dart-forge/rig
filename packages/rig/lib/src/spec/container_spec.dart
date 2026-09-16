@@ -105,8 +105,11 @@ final class NormalizedSpec {
   /// One line per meaningful property, in a fixed order. Two specs that
   /// would produce the same container produce the same lines.
   ///
-  /// Mounts appear by path only. Their contents are folded in by `specHash`,
-  /// which can read files; this stays synchronous and pure.
+  /// A mount appears by its container path and access mode. The host path is
+  /// deliberately absent: what the container sees is the content, which
+  /// `specHash` folds in by reading the file. Leaving the host path out is
+  /// what lets the same files at a different absolute path — another
+  /// checkout, a CI runner — still share one container.
   final List<String> canonicalLines;
 }
 
@@ -131,7 +134,7 @@ NormalizedSpec normalizeSpec(ContainerSpec spec) {
     for (final port in sortedPorts) 'port=$port',
     for (final path in sortedTmpfs) 'tmpfs=$path',
     for (final m in sortedMounts)
-      'mount=${m.hostPath}:${m.containerPath}:${m.readOnly ? 'ro' : 'rw'}',
+      'mount=${m.containerPath}:${m.readOnly ? 'ro' : 'rw'}',
     if (spec.user != null) 'user=${spec.user}',
     if (spec.workingDir != null) 'workdir=${spec.workingDir}',
     if (spec.privileged) 'privileged=true',

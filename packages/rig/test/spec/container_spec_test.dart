@@ -77,6 +77,54 @@ void main() {
       expect(tmpfsLines, ['tmpfs=/a', 'tmpfs=/b']);
     });
 
+    test('excludes the host path of a mount: the container sees content, '
+        'not where it came from', () {
+      // Two checkouts at different absolute paths must still share a
+      // container. The content itself is folded in by specHash.
+      const here = ContainerSpec(
+        image: 'x',
+        waitFor: WaitFor.healthy(),
+        mounts: [Mount(hostPath: '/a/server.crt', containerPath: '/c')],
+      );
+      const there = ContainerSpec(
+        image: 'x',
+        waitFor: WaitFor.healthy(),
+        mounts: [Mount(hostPath: '/b/server.crt', containerPath: '/c')],
+      );
+
+      expect(
+        normalizeSpec(here).canonicalLines,
+        normalizeSpec(there).canonicalLines,
+      );
+    });
+
+    test('includes the container path and access mode of a mount', () {
+      const ro = ContainerSpec(
+        image: 'x',
+        waitFor: WaitFor.healthy(),
+        mounts: [Mount(hostPath: '/h', containerPath: '/c')],
+      );
+      const elsewhere = ContainerSpec(
+        image: 'x',
+        waitFor: WaitFor.healthy(),
+        mounts: [Mount(hostPath: '/h', containerPath: '/other')],
+      );
+      const rw = ContainerSpec(
+        image: 'x',
+        waitFor: WaitFor.healthy(),
+        mounts: [Mount(hostPath: '/h', containerPath: '/c', readOnly: false)],
+      );
+
+      expect(
+        normalizeSpec(ro).canonicalLines,
+        isNot(normalizeSpec(elsewhere).canonicalLines),
+      );
+      expect(
+        normalizeSpec(ro).canonicalLines,
+        isNot(normalizeSpec(rw).canonicalLines),
+      );
+    });
+
     test(
       'excludes waitFor: the wait strategy does not change the container',
       () {
