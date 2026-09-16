@@ -242,6 +242,17 @@ void main() {
     // never sleeps when the lock is free — so if the lock file exists at that
     // moment, readiness is being awaited while holding it, which would stall
     // every other suite for the length of the wait.
+    //
+    // Three health entries, not two: acquireContainer inspects the container
+    // once to read its ports before awaiting readiness, and that inspection
+    // consumes the first entry. With only [starting, healthy] the readiness
+    // poll would see healthy on its first look, never sleep, and never reach
+    // the observation below — the test would pass whatever the lock did.
+    engine.healthAfterCreate = const [
+      HealthStatus.starting,
+      HealthStatus.starting,
+      HealthStatus.healthy,
+    ];
     var lockHeldDuringWait = false;
 
     await acquireContainer(
