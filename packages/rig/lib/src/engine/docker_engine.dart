@@ -1,4 +1,5 @@
 import '../spec/container_spec.dart';
+import '../spec/labels.dart';
 
 /// What the daemon reports about itself.
 final class EngineVersion {
@@ -123,3 +124,16 @@ abstract interface class DockerEngine {
 
   Future<void> close();
 }
+
+/// Every container rig made, whatever its lifetime or health.
+///
+/// The one place this filter is built. `rig ls`, `rig prune` and the
+/// piling-up warning in `useContainer` all call this instead of building
+/// the label filter themselves, so the three can never disagree about what
+/// counts as rig's — one of them is the destructive path.
+Future<List<ContainerSummary>> rigContainers(DockerEngine engine) =>
+    engine.listContainers(
+      filters: {
+        'label': [rigMarkerLabel],
+      },
+    );

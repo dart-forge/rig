@@ -188,7 +188,7 @@ final class FakeDockerEngine implements DockerEngine {
   @override
   Future<void> stopContainer(
     String id, {
-    Duration timeout = const Duration(seconds: 10),
+    Duration timeout = const Duration(seconds: 2),
   }) async {
     calls.add('stop:$id');
     _require(id)

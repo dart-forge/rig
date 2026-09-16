@@ -54,7 +54,12 @@ final class _PruneCommand extends Command<int> {
     argParser
       ..addOption(
         'older-than',
-        help: 'Remove shared containers older than this (7d, 12h, 30m).',
+        help:
+            'Remove shared containers older than this (7d, 12h, 30m). Age '
+            'is when Docker created the container, not when it was last '
+            'used — Docker exposes no such time — so a bare prune can '
+            'remove a long-lived shared container a suite is using right '
+            'now.',
         defaultsTo: '7d',
       )
       ..addFlag(
@@ -65,7 +70,9 @@ final class _PruneCommand extends Command<int> {
       ..addFlag(
         'failed',
         negatable: false,
-        help: 'Remove only containers kept after a readiness failure.',
+        help:
+            'Remove only containers kept after a readiness failure. '
+            'Wins over --all when both are given.',
       );
   }
 

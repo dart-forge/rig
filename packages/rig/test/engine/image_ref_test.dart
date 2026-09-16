@@ -40,4 +40,21 @@ void main() {
       tag: '16',
     ));
   });
+
+  group('garbage in, pinned rather than crashing', () {
+    // None of these are valid image references — Docker itself would answer
+    // with an EngineError — but this pins today's harmless behaviour against
+    // a later refactor accidentally turning an empty string into a crash.
+    test('an empty string defaults to latest', () {
+      expect(splitImageRef(''), (name: '', tag: 'latest'));
+    });
+
+    test('a trailing colon with nothing after it is an empty tag', () {
+      expect(splitImageRef('name:'), (name: 'name', tag: ''));
+    });
+
+    test('a leading colon with nothing before it is an empty name', () {
+      expect(splitImageRef(':tag'), (name: '', tag: 'tag'));
+    });
+  });
 }

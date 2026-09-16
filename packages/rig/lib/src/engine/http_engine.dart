@@ -278,7 +278,10 @@ final class HttpDockerEngine implements DockerEngine {
   @override
   Future<void> stopContainer(
     String id, {
-    Duration timeout = const Duration(seconds: 10),
+    // A container whose entrypoint is PID 1 with no SIGTERM handler ignores
+    // the signal, so Docker waits the whole budget before SIGKILL. Every
+    // dedicated suite pays this on every run, so it stays short.
+    Duration timeout = const Duration(seconds: 2),
   }) async {
     final res = await _send(
       'POST',

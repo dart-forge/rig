@@ -24,6 +24,20 @@ final class Mount {
   final bool readOnly;
 }
 
+/// The one ordering for a list of mounts, shared by [normalizeSpec] and
+/// `specHash`'s content digest.
+///
+/// Both need mounts in a fixed order, and disagreeing about that order would
+/// let the canonical lines describe a different set of mounts than the
+/// content digests do. [Mount.hostPath] is the tie-break rather than leaving
+/// it to `List.sort`'s incidental behaviour, which Dart does not promise is
+/// stable.
+int compareMounts(Mount a, Mount b) {
+  final byContainerPath = a.containerPath.compareTo(b.containerPath);
+  if (byContainerPath != 0) return byContainerPath;
+  return a.hostPath.compareTo(b.hostPath);
+}
+
 /// A health probe rig installs when creating the container.
 ///
 /// Most official images ship no HEALTHCHECK, so rig adds one at create time
@@ -165,8 +179,7 @@ NormalizedSpec normalizeSpec(ContainerSpec spec) {
   final sortedEnv = spec.env.keys.toList()..sort();
   final sortedPorts = spec.exposedPorts.toSet().toList()..sort();
   final sortedTmpfs = spec.tmpfs.toList()..sort();
-  final sortedMounts = spec.mounts.toList()
-    ..sort((a, b) => a.containerPath.compareTo(b.containerPath));
+  final sortedMounts = spec.mounts.toList()..sort(compareMounts);
 
   return NormalizedSpec([
     'image=${spec.image}',

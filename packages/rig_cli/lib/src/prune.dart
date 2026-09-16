@@ -19,11 +19,7 @@ Future<int> runPrune({
 }) async {
   stateDir.ensure();
 
-  final held = await engine.listContainers(
-    filters: {
-      'label': [rigMarkerLabel],
-    },
-  );
+  final held = await rigContainers(engine);
 
   final failedIds = _markedAsFailed(stateDir);
   final doomed = held.where((c) {

@@ -6,11 +6,7 @@ Future<int> runLs({
   required void Function(String) out,
   required DateTime now,
 }) async {
-  final containers = await engine.listContainers(
-    filters: {
-      'label': [rigMarkerLabel],
-    },
-  );
+  final containers = await rigContainers(engine);
 
   if (containers.isEmpty) {
     out('No containers held by rig.');

@@ -55,8 +55,7 @@ String _unambiguous(List<String> lines) {
 }
 
 List<String> _mountContentLines(ContainerSpec spec, int maxBytes) {
-  final sorted = spec.mounts.toList()
-    ..sort((a, b) => a.containerPath.compareTo(b.containerPath));
+  final sorted = spec.mounts.toList()..sort(compareMounts);
 
   return [
     for (final mount in sorted)
@@ -84,6 +83,12 @@ String _fileDigest(File file, int maxBytes) {
   return sha256.convert(file.readAsBytesSync()).toString();
 }
 
+/// Symlinks are not followed: doing so would make the hash depend on
+/// whatever the link points at, which can live outside the mount entirely.
+/// A directory with no files in it (or none under the byte limit) walks to
+/// an empty list of entries and so contributes a fixed digest of its own —
+/// still distinct from [_digestOf]'s `absent` for a source that does not
+/// exist, but the same for every empty directory, however it got that way.
 String _dirDigest(Directory dir, int maxBytes) {
   final entries =
       dir
