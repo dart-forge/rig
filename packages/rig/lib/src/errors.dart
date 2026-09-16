@@ -123,3 +123,39 @@ final class LeaseNotBound extends RigException {
       'setUpAll, so read host/port inside a test body or a later setUp, '
       'not at the top level of main().';
 }
+
+/// `WaitFor.healthy()` was used on a container that has no healthcheck.
+///
+/// This is a mistake in the spec, not a slow container, so it fails at once
+/// instead of after the timeout.
+final class NoHealthcheck extends RigException {
+  const NoHealthcheck({required this.containerId});
+
+  final String containerId;
+
+  @override
+  String get message =>
+      'WaitFor.healthy() needs a healthcheck, and container $containerId '
+      'has none.\n\n'
+      'Most official images ship without one. Either give the spec a '
+      'healthcheck:\n'
+      "  healthcheck: Healthcheck(test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1'])\n"
+      'or wait on something else, such as WaitFor.port(5432).';
+}
+
+/// The container stopped on its own while rig was waiting for it.
+final class ContainerExited extends RigException {
+  const ContainerExited({required this.containerId, required this.logTail});
+
+  final String containerId;
+  final String logTail;
+
+  @override
+  String get message => [
+    'Container $containerId exited while rig was waiting for it to '
+        'become usable.',
+    '',
+    'Last output:',
+    if (logTail.isEmpty) '  (no output)' else logTail,
+  ].join('\n');
+}
