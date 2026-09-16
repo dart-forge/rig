@@ -99,7 +99,7 @@ void main() {
   test('takes over a lock left behind by a crashed holder', () async {
     Link(lockPath)
       ..parent.createSync(recursive: true)
-      ..createSync('held-at:2020-01-01T00:00:00.000Z|pid:1');
+      ..createSync('held-at:2020-01-01T00:00:00.000Z|pid:1|token:dead');
 
     // The marker is old, so the lock can be taken over. If it could not be,
     // this call would time out instead.
@@ -111,6 +111,48 @@ void main() {
 
     expect(result, 'took over');
   });
+
+  test(
+    'two waiters racing on the same stale lock do not both get in',
+    () async {
+      // The bug this pins: both waiters judge the same marker stale, the first
+      // deletes it and creates its own, and the second — still acting on the
+      // judgement it made a moment earlier — deletes that fresh lock by path
+      // and walks in alongside.
+      Link(lockPath)
+        ..parent.createSync(recursive: true)
+        ..createSync('held-at:2020-01-01T00:00:00.000Z|pid:1|token:dead');
+
+      final held = <List<int>>[];
+      final done = <Future<void>>[];
+
+      for (var i = 0; i < 2; i++) {
+        final receiver = ReceivePort();
+        final finished = Completer<void>();
+        receiver.listen((message) {
+          held.add((message as List).cast<int>());
+          receiver.close();
+          finished.complete();
+        });
+        await Isolate.spawn(lockHolder, (receiver.sendPort, lockPath));
+        done.add(finished.future);
+      }
+
+      await Future.wait(done);
+
+      expect(held, hasLength(2));
+      final [first, second] = held;
+      final overlapped = first[0] < second[1] && second[0] < first[1];
+      expect(
+        overlapped,
+        isFalse,
+        reason:
+            'both waiters broke the same stale lock and entered together: '
+            'held $first and $second',
+      );
+    },
+    timeout: const Timeout(Duration(seconds: 30)),
+  );
 
   test('does not take over a fresh lock, and times out instead', () async {
     Link(lockPath)

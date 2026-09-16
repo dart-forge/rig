@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 
 import '../errors.dart';
 
@@ -10,6 +11,8 @@ const Duration defaultLockStaleAfter = Duration(seconds: 120);
 
 const Duration _defaultTimeout = Duration(seconds: 60);
 const Duration _defaultRetryInterval = Duration(milliseconds: 25);
+
+final Random _tokens = Random();
 
 /// Run [body] with nothing else holding [lockPath].
 ///
@@ -42,15 +45,14 @@ Future<T> withExclusiveLock<T>(
       }
     }
 
-    if (_isStale(link, now(), staleAfter)) {
-      _release(link);
-      continue;
-    }
-
-    if (!now().isBefore(deadline)) {
+    final held = _readTarget(link);
+    if (held == null || _isStale(held, now(), staleAfter)) {
+      _breakIfUnchanged(link, held);
+    } else if (!now().isBefore(deadline)) {
       throw LockTimeout(lockPath: lockPath, waited: timeout);
+    } else {
+      await sleep(retryInterval);
     }
-    await sleep(retryInterval);
   }
 }
 
@@ -58,30 +60,59 @@ Future<T> withExclusiveLock<T>(
 /// path: a dangling symlink is fine and its target is readable.
 bool _tryCreate(Link link, DateTime at) {
   try {
-    link.createSync('held-at:${at.toUtc().toIso8601String()}|pid:$pid');
+    link.createSync(_marker(at));
     return true;
   } on FileSystemException {
     return false;
   }
 }
 
-bool _isStale(Link link, DateTime at, Duration staleAfter) {
-  final held = _heldAt(link);
-  // An unreadable marker is treated as stale: a lock nobody can reason about
-  // must not block every future run forever.
+/// Identifies one holder. The random token matters: two isolates in one
+/// process share a pid, and without it two holders could write the same
+/// marker — which would defeat the comparison in [_breakIfUnchanged].
+String _marker(DateTime at) =>
+    'held-at:${at.toUtc().toIso8601String()}'
+    '|pid:$pid'
+    '|token:${_tokens.nextInt(1 << 32).toRadixString(16)}';
+
+/// Removes the lock, but only while it still carries exactly [observed].
+///
+/// The comparison is the point. Deleting by path alone lets a caller that
+/// judged a lock stale delete the *fresh* lock a faster caller created in the
+/// meantime, putting two callers inside the critical section at once. A
+/// marker carries a pid and a random token, so a fresh lock never looks like
+/// the expired one. Two callers breaking the *same* stale lock is harmless:
+/// the second delete finds nothing and the loser simply waits for the winner.
+///
+/// No syscall offers compare-and-delete, so a window one syscall wide
+/// remains. Its worst outcome is two callers each creating a container for
+/// the same spec, which leaves one spare for `rig prune` rather than giving
+/// either caller the wrong container.
+void _breakIfUnchanged(Link link, String? observed) {
+  if (_readTarget(link) != observed) return;
+  _release(link);
+}
+
+/// An unreadable marker counts as stale: a lock nobody can reason about must
+/// not block every future run forever.
+bool _isStale(String target, DateTime at, Duration staleAfter) {
+  final held = _heldAt(target);
   if (held == null) return true;
   return at.toUtc().difference(held) > staleAfter;
 }
 
-DateTime? _heldAt(Link link) {
+String? _readTarget(Link link) {
   try {
-    final target = link.targetSync();
-    final match = RegExp(r'held-at:([^|]+)').firstMatch(target);
-    if (match == null) return null;
-    return DateTime.tryParse(match.group(1)!)?.toUtc();
+    return link.targetSync();
   } on FileSystemException {
     return null;
   }
+}
+
+DateTime? _heldAt(String target) {
+  final match = RegExp(r'held-at:([^|]+)').firstMatch(target);
+  if (match == null) return null;
+  return DateTime.tryParse(match.group(1)!)?.toUtc();
 }
 
 void _release(Link link) {
