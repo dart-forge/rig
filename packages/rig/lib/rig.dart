@@ -7,3 +7,5 @@ export 'src/spec/spec_hash.dart';
 export 'src/wait/wait_for.dart';
 export 'src/spec/labels.dart';
 export 'src/wait/ready.dart';
+export 'src/lease/acquire.dart';
+export 'src/lease/state_dir.dart';
