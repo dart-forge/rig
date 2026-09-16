@@ -9,7 +9,7 @@ import 'package:test/test.dart';
 
 /// Every container this suite makes carries this, so the teardown can find
 /// them all even if a test fails halfway.
-const _ownLabel = 'org.rig.test.run';
+const _ownLabel = 'dev.dart-forge.rig.test.run';
 
 void main() {
   late DockerEngine engine;

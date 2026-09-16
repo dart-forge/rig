@@ -2,19 +2,25 @@ import 'container_spec.dart';
 
 /// Present on every container rig creates. `rig prune` treats it as the
 /// permission to delete.
-const String rigMarkerLabel = 'org.rig';
+///
+/// Namespaced under `dev.dart-forge`, the publisher, rather than `org.rig`:
+/// nobody here owns the `rig.org` domain that reverse-DNS name implies. This
+/// value cannot change again after rig is published — an older rig's
+/// containers would stop being visible to a newer `rig prune`, which is
+/// exactly the orphan problem these labels exist to prevent.
+const String rigMarkerLabel = 'dev.dart-forge.rig';
 
 /// The spec hash. This is the search key for sharing.
-const String rigHashLabel = 'org.rig.hash';
+const String rigHashLabel = 'dev.dart-forge.rig.hash';
 
 /// `shared` or `dedicated`.
-const String rigLifetimeLabel = 'org.rig.lifetime';
+const String rigLifetimeLabel = 'dev.dart-forge.rig.lifetime';
 
 /// The pubspec name of the package whose tests created this.
-const String rigProjectLabel = 'org.rig.project';
+const String rigProjectLabel = 'dev.dart-forge.rig.project';
 
 /// A short, human-readable description for `rig ls`.
-const String rigSummaryLabel = 'org.rig.summary';
+const String rigSummaryLabel = 'dev.dart-forge.rig.summary';
 
 /// The labels rig puts on a container it creates.
 ///

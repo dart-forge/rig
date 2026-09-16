@@ -95,7 +95,7 @@ abstract interface class DockerEngine {
   Future<void> pullImage(String image);
 
   /// Containers matching [filters], in Docker's filter form:
-  /// `{'label': ['org.rig=1'], 'status': ['running']}`.
+  /// `{'label': ['dev.dart-forge.rig=1'], 'status': ['running']}`.
   Future<List<ContainerSummary>> listContainers({
     Map<String, List<String>> filters,
     bool all,
