@@ -69,15 +69,40 @@ Future<void> awaitReady({
     if (await _isSatisfied(strategy, engine, target)) return;
 
     if (!now().isBefore(deadline)) {
-      throw ReadyTimeout(
-        containerId: target.containerId,
-        waited: strategy.timeout,
-        waitingFor: _waitingForText(strategy, target),
-        logTail: await engine.logTail(target.containerId, lines: _logTailLines),
-      );
+      throw await _timeoutError(strategy, engine, target);
     }
     await sleep(pollInterval);
   }
+}
+
+/// What to throw when the deadline runs out.
+///
+/// A [PortWait] or [HttpOkWait] never inspects the container while polling —
+/// they only try to connect — so a container that crashed early looks
+/// exactly like one that is merely slow to accept connections, right up
+/// until the deadline. Checking once here, instead of assuming the container
+/// is still running, is what keeps `ReadyTimeout`'s "docker exec into it"
+/// advice from being handed out for a container that no longer exists to
+/// exec into.
+Future<RigException> _timeoutError(
+  WaitFor strategy,
+  DockerEngine engine,
+  ReadyTarget target,
+) async {
+  final inspected = await engine.inspectContainer(target.containerId);
+  if (!inspected.running) {
+    return ContainerExited(
+      containerId: target.containerId,
+      logTail: await engine.logTail(target.containerId, lines: _logTailLines),
+    );
+  }
+
+  return ReadyTimeout(
+    containerId: target.containerId,
+    waited: strategy.timeout,
+    waitingFor: _waitingForText(strategy, target),
+    logTail: await engine.logTail(target.containerId, lines: _logTailLines),
+  );
 }
 
 /// Adds the reason a port check can never succeed, so the message says more

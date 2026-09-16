@@ -186,6 +186,34 @@ void main() {
       );
     });
 
+    test('reports ContainerExited, not a misleading ReadyTimeout, when the '
+        'container exited while the port was being waited on', () async {
+      final id = engine.addContainer(labels: const {}, state: 'exited');
+      engine.setLogs(id, 'exec format error');
+
+      await expectLater(
+        wait(
+          const WaitFor.port(5432, timeout: Duration(milliseconds: 50)),
+          targetFor(id, ports: {5432: 12345}),
+        ),
+        throwsA(
+          isA<ContainerExited>().having(
+            (e) => e.message,
+            'message',
+            // Pinning the full message, not just the type: the bug this
+            // fixes is PortWait handing out ReadyTimeout's "still running,
+            // go run docker exec" advice for a container that already
+            // exited. Only a full-message check proves that text is gone.
+            'Container $id exited while rig was waiting for it to '
+                'become usable.\n'
+                '\n'
+                'Last output:\n'
+                'exec format error',
+          ),
+        ),
+      );
+    });
+
     test('fails clearly when the port was never published', () async {
       final id = engine.addContainer(labels: const {});
 
