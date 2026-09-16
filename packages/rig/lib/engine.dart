@@ -4,5 +4,7 @@
 /// Not part of rig's stable API: it changes with what rig needs.
 library;
 
+export 'src/engine/connect.dart';
+export 'src/engine/current.dart';
 export 'src/engine/docker_engine.dart';
 export 'src/spec/labels.dart';

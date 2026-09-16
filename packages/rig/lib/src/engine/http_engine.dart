@@ -7,6 +7,8 @@ import '../spec/container_spec.dart';
 import 'api_body.dart';
 import 'api_parse.dart';
 import 'docker_engine.dart';
+import 'image_ref.dart';
+import 'log_frames.dart';
 
 /// Talks to a Docker daemon over its unix domain socket.
 ///
@@ -156,19 +158,23 @@ final class HttpDockerEngine implements DockerEngine {
     );
   }
 
-  // Implemented in a later step. Throwing keeps anything from quietly
-  // depending on a stub.
-  @override
-  Future<bool> imageExists(String image) => throw UnimplementedError();
-
-  @override
-  Future<void> pullImage(String image) => throw UnimplementedError();
-
   @override
   Future<List<ContainerSummary>> listContainers({
     Map<String, List<String>> filters = const {},
     bool all = true,
-  }) => throw UnimplementedError();
+  }) async {
+    final query = {
+      'all': all ? '1' : '0',
+      if (filters.isNotEmpty) 'filters': jsonEncode(filters),
+    };
+    final res = await _sendOk('GET', '/containers/json?${_query(query)}');
+    final decoded = jsonDecode(res.text);
+    if (decoded is! List) return const [];
+    return [
+      for (final item in decoded)
+        if (item is Map<String, Object?>) parseSummary(item),
+    ];
+  }
 
   @override
   Future<String> createContainer(
@@ -212,17 +218,97 @@ final class HttpDockerEngine implements DockerEngine {
       parseInspect(await _getJsonMap('/containers/$id/json'));
 
   @override
-  Future<String> logTail(String id, {int lines = 50}) =>
-      throw UnimplementedError();
+  Future<String> logTail(String id, {int lines = 50}) async {
+    final query = {'stdout': '1', 'stderr': '1', 'tail': '$lines'};
+    final res = await _send('GET', '/containers/$id/logs?${_query(query)}');
+    // Logs are read in order to build an error message. Throwing here would
+    // replace the real failure with a less useful one.
+    if (res.statusCode >= 400) return '';
+    return demuxLogFrames(res.bytes);
+  }
 
   @override
   Future<void> stopContainer(
     String id, {
     Duration timeout = const Duration(seconds: 10),
-  }) => throw UnimplementedError();
+  }) async {
+    final res = await _send(
+      'POST',
+      '/containers/$id/stop?${_query({'t': '${timeout.inSeconds}'})}',
+    );
+    // 304: already stopped, which is the requested state.
+    if (res.statusCode == 304 || res.statusCode < 400) return;
+    throw EngineError(
+      method: 'POST',
+      path: res.path,
+      statusCode: res.statusCode,
+      body: res.text,
+    );
+  }
 
   @override
-  Future<void> removeContainer(String id) => throw UnimplementedError();
+  Future<void> removeContainer(String id) async {
+    final res = await _send(
+      'DELETE',
+      '/containers/$id?${_query({'v': '1', 'force': '1'})}',
+    );
+    // 404: already gone, which is what removing it was for.
+    if (res.statusCode == 404 || res.statusCode < 400) return;
+    throw EngineError(
+      method: 'DELETE',
+      path: res.path,
+      statusCode: res.statusCode,
+      body: res.text,
+    );
+  }
+
+  @override
+  Future<bool> imageExists(String image) async {
+    final res = await _send('GET', '/images/$image/json');
+    return res.statusCode < 400;
+  }
+
+  @override
+  Future<void> pullImage(String image) async {
+    final ref = splitImageRef(image);
+    final query = {'fromImage': ref.name, 'tag': ref.tag};
+    final res = await _send('POST', '/images/create?${_query(query)}');
+
+    if (res.statusCode >= 400) {
+      throw ImagePullFailed(image: image, detail: res.text);
+    }
+
+    // Docker answers 200 and then reports failure inside the progress
+    // stream, so the body has to be read even on success.
+    final failure = _pullError(res.text);
+    if (failure != null) {
+      throw ImagePullFailed(image: image, detail: failure);
+    }
+  }
+
+  /// The first error reported in a pull progress stream, if any.
+  static String? _pullError(String body) {
+    for (final line in body.split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      try {
+        final decoded = jsonDecode(trimmed);
+        if (decoded is Map && decoded['error'] != null) {
+          return decoded['error'].toString();
+        }
+      } on FormatException {
+        continue;
+      }
+    }
+    return null;
+  }
+
+  static String _query(Map<String, String> params) => params.entries
+      .map(
+        (e) =>
+            '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}',
+      )
+      .join('&');
 }
 
 final class _EngineResponse {

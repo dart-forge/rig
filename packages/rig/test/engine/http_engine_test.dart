@@ -540,4 +540,260 @@ void main() {
       );
     });
   });
+
+  group('listContainers', () {
+    test('sends filters as url-encoded json', () async {
+      server.on('GET', '/v1.44/containers/json', json: <Object?>[]);
+
+      await engine.listContainers(
+        filters: {
+          'label': ['org.rig.hash=abc'],
+          'status': ['running'],
+        },
+      );
+
+      final uri = Uri.parse('http://x${server.requests.single.path}');
+      final filters = uri.queryParameters['filters']!;
+
+      expect(filters, contains('org.rig.hash=abc'));
+      expect(filters, contains('running'));
+      expect(uri.queryParameters['all'], '1');
+    });
+
+    test('parses a listing, reading Created as unix seconds', () async {
+      server.on(
+        'GET',
+        '/v1.44/containers/json',
+        json: [
+          {
+            'Id': 'abc',
+            'Image': 'postgres:16-alpine',
+            'State': 'running',
+            'Labels': {'org.rig': '1'},
+            'Created': 1758000000,
+            'Names': ['/rig-thing'],
+          },
+        ],
+      );
+
+      final found = await engine.listContainers();
+
+      expect(found.single.id, 'abc');
+      expect(found.single.image, 'postgres:16-alpine');
+      expect(found.single.state, 'running');
+      expect(found.single.labels['org.rig'], '1');
+      expect(
+        found.single.created,
+        DateTime.fromMillisecondsSinceEpoch(1758000000 * 1000, isUtc: true),
+      );
+      expect(found.single.names, ['/rig-thing']);
+    });
+
+    test('sends all=0 when only running containers are wanted', () async {
+      server.on('GET', '/v1.44/containers/json', json: <Object?>[]);
+
+      await engine.listContainers(all: false);
+
+      final uri = Uri.parse('http://x${server.requests.single.path}');
+      expect(uri.queryParameters['all'], '0');
+    });
+  });
+
+  group('logTail', () {
+    test('asks for the requested number of lines with both streams', () async {
+      server.on('GET', '/v1.44/containers/abc/logs', body: '');
+
+      await engine.logTail('abc', lines: 25);
+
+      final uri = Uri.parse('http://x${server.requests.single.path}');
+      expect(uri.queryParameters['tail'], '25');
+      expect(uri.queryParameters['stdout'], '1');
+      expect(uri.queryParameters['stderr'], '1');
+      expect(uri.queryParameters.containsKey('follow'), isFalse);
+    });
+
+    test(
+      'returns empty rather than throwing when the container is gone',
+      () async {
+        server.on(
+          'GET',
+          '/v1.44/containers/abc/logs',
+          status: 404,
+          json: {'message': 'No such container'},
+        );
+
+        // Logs are read to build an error message; throwing here would hide
+        // the failure the reader actually needs.
+        expect(await engine.logTail('abc'), isEmpty);
+      },
+    );
+  });
+
+  group('stopContainer', () {
+    test('passes the timeout in seconds', () async {
+      server.on('POST', '/v1.44/containers/abc/stop', status: 204);
+
+      await engine.stopContainer('abc', timeout: const Duration(seconds: 3));
+
+      final uri = Uri.parse('http://x${server.requests.single.path}');
+      expect(uri.queryParameters['t'], '3');
+    });
+
+    test('treats 304 (already stopped) as success', () async {
+      server.on('POST', '/v1.44/containers/abc/stop', status: 304);
+
+      await expectLater(engine.stopContainer('abc'), completes);
+    });
+  });
+
+  group('removeContainer', () {
+    test('removes volumes and forces', () async {
+      server.on('DELETE', '/v1.44/containers/abc', status: 204);
+
+      await engine.removeContainer('abc');
+
+      final uri = Uri.parse('http://x${server.requests.single.path}');
+      expect(uri.queryParameters['v'], '1');
+      expect(uri.queryParameters['force'], '1');
+    });
+
+    test('treats 404 as success: the goal was for it to be gone', () async {
+      server.on(
+        'DELETE',
+        '/v1.44/containers/abc',
+        status: 404,
+        json: {'message': 'No such container'},
+      );
+
+      await expectLater(engine.removeContainer('abc'), completes);
+    });
+  });
+
+  group('imageExists', () {
+    test('is true on 200', () async {
+      server.on(
+        'GET',
+        '/v1.44/images/postgres:16-alpine/json',
+        json: {'Id': 'x'},
+      );
+
+      expect(await engine.imageExists('postgres:16-alpine'), isTrue);
+    });
+
+    test('is false on 404', () async {
+      server.on(
+        'GET',
+        '/v1.44/images/',
+        status: 404,
+        json: {'message': 'No such image'},
+      );
+
+      expect(await engine.imageExists('nope:1'), isFalse);
+    });
+  });
+
+  group('connectToDocker', () {
+    // DOCKER_HOST points at the fake server's socket, which exists, so
+    // discovery stops there and never reaches the well-known paths — these
+    // tests cannot touch the real Docker on the machine running them.
+    test(
+      'wires discovery to a client and accepts a supported daemon',
+      () async {
+        server.on('GET', '/v1.44/_ping', body: 'OK');
+        server.on(
+          'GET',
+          '/v1.44/version',
+          json: {
+            'Version': '29.5.3',
+            'ApiVersion': '1.54',
+            'MinAPIVersion': '1.40',
+          },
+        );
+
+        final connected = await connectToDocker(
+          environment: {'DOCKER_HOST': 'unix://$socketPath'},
+          home: tmp.path,
+        );
+        addTearDown(connected.close);
+
+        await expectLater(connected.ping(), completes);
+      },
+    );
+
+    test(
+      'refuses a daemon that no longer accepts the pinned API version',
+      () async {
+        server.on('GET', '/v1.44/_ping', body: 'OK');
+        server.on(
+          'GET',
+          '/v1.44/version',
+          json: {
+            'Version': '45.0.0',
+            'ApiVersion': '1.70',
+            'MinAPIVersion': '1.50',
+          },
+        );
+
+        await expectLater(
+          connectToDocker(
+            environment: {'DOCKER_HOST': 'unix://$socketPath'},
+            home: tmp.path,
+          ),
+          throwsA(isA<EngineApiTooOld>()),
+        );
+      },
+    );
+  });
+
+  group('pullImage', () {
+    test('sends the name and tag separately', () async {
+      server.on(
+        'POST',
+        '/v1.44/images/create',
+        body: '{"status":"Download complete"}',
+      );
+
+      await engine.pullImage('postgres:16-alpine');
+
+      final uri = Uri.parse('http://x${server.requests.single.path}');
+      expect(uri.queryParameters['fromImage'], 'postgres');
+      expect(uri.queryParameters['tag'], '16-alpine');
+    });
+
+    test('fails when the progress stream reports an error', () async {
+      // Docker answers 200 and puts the failure in the stream body.
+      server.on(
+        'POST',
+        '/v1.44/images/create',
+        body:
+            '{"status":"Pulling"}\n'
+            '{"error":"manifest unknown","errorDetail":{}}\n',
+      );
+
+      await expectLater(
+        engine.pullImage('nope:1'),
+        throwsA(
+          isA<ImagePullFailed>().having(
+            (e) => e.message,
+            'message',
+            contains('manifest unknown'),
+          ),
+        ),
+      );
+    });
+
+    test('fails on an error status too', () async {
+      server.on(
+        'POST',
+        '/v1.44/images/create',
+        status: 500,
+        json: {'message': 'server broke'},
+      );
+
+      await expectLater(
+        engine.pullImage('x:1'),
+        throwsA(isA<ImagePullFailed>()),
+      );
+    });
+  });
 }
