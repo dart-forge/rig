@@ -79,7 +79,10 @@ final class ImagePullFailed extends RigException {
   final String detail;
 
   @override
-  String get message => 'Could not pull $image: $detail';
+  String get message =>
+      'Could not pull $image: $detail\n\n'
+      'Check that the image name and tag are correct, and that '
+      '`docker pull $image` works from this machine.';
 }
 
 /// A container started but never became usable within the timeout.

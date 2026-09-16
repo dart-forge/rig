@@ -91,6 +91,15 @@ void main() {
       expect(e.message, contains('postgres:16-alpine'));
       expect(e.message, contains('manifest unknown'));
     });
+
+    test('suggests checking the name, tag and a plain docker pull', () {
+      final e = ImagePullFailed(
+        image: 'postgres:16-alpine',
+        detail: 'manifest unknown',
+      );
+
+      expect(e.message, contains('docker pull postgres:16-alpine'));
+    });
   });
 
   group('LeaseNotBound', () {
