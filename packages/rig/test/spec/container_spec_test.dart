@@ -4,7 +4,7 @@ import 'package:test/test.dart';
 void main() {
   group('ContainerSpec', () {
     test('can be built as a const', () {
-      // const で作れることが共有の調停の前提。コンパイルが通れば合格。
+      // Const-constructibility is what sharing rests on; compiling is the assertion.
       const spec = ContainerSpec(
         image: 'redis:7-alpine',
         exposedPorts: [6379],
@@ -133,20 +133,34 @@ void main() {
         waitFor: WaitFor.healthy(),
         user: '1000:1000',
       );
+      const withWorkingDir = ContainerSpec(
+        image: 'x',
+        waitFor: WaitFor.healthy(),
+        workingDir: '/app',
+      );
       const withPrivileged = ContainerSpec(
         image: 'x',
         waitFor: WaitFor.healthy(),
         privileged: true,
       );
+      const withNetworkMode = ContainerSpec(
+        image: 'x',
+        waitFor: WaitFor.healthy(),
+        networkMode: 'host',
+      );
 
-      expect(
-        normalizeSpec(base).canonicalLines,
-        isNot(normalizeSpec(withUser).canonicalLines),
-      );
-      expect(
-        normalizeSpec(base).canonicalLines,
-        isNot(normalizeSpec(withPrivileged).canonicalLines),
-      );
+      // All four are named in this test's title, so all four are varied.
+      for (final other in [
+        withUser,
+        withWorkingDir,
+        withPrivileged,
+        withNetworkMode,
+      ]) {
+        expect(
+          normalizeSpec(base).canonicalLines,
+          isNot(normalizeSpec(other).canonicalLines),
+        );
+      }
     });
 
     test('canonical lines are stable across calls', () {

@@ -16,7 +16,7 @@ void main() {
       expect(e.message, contains('/var/run/docker.sock'));
       expect(e.message, contains('/Users/x/.docker/run/docker.sock'));
       expect(e.message, contains(r'$DOCKER_HOST (not set)'));
-      // 直し方を書く。理由の分からない失敗にしない。
+      // Say how to fix it: a failure nobody can act on is not worth throwing.
       expect(e.message, contains('Is Docker running?'));
     });
 
