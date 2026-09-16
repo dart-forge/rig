@@ -236,6 +236,32 @@ void main() {
     expect(engine.calls.where((c) => c == 'create'), isEmpty);
   });
 
+  test('pulls the image before the lock is taken, not inside it', () async {
+    // A cold pull can take far longer than the lock's own timeouts assume
+    // (a few seconds): if the pull happened inside the lock, every other
+    // shared suite would fail with LockTimeout mid-pull, or worse, start
+    // treating a live lock as stale and break it.
+    final hash = specHash(spec);
+    var lockHeldDuringPull = false;
+    final probing = _PullProbingEngine(engine, () {
+      lockHeldDuringPull = Link(state.lockPath(hash)).existsSync();
+    });
+
+    await acquireContainer(
+      spec: spec,
+      engine: probing,
+      stateDir: state,
+      project: 'aim_postgres',
+      sleep: (_) async {},
+    );
+
+    expect(
+      lockHeldDuringPull,
+      isFalse,
+      reason: 'the lock must cover create and start only, never the pull',
+    );
+  });
+
   test('the lock is not held while readiness is awaited', () async {
     // Observed directly rather than inferred from timing. The only sleeping
     // this call does is inside the readiness poll — the lock's own retry loop
@@ -273,4 +299,65 @@ void main() {
       reason: 'the lock must cover create and start only',
     );
   });
+}
+
+/// Delegates to [_inner], calling [_onPull] the moment [pullImage] is
+/// invoked — before the fake actually records or completes the pull — so a
+/// test can observe state (like whether the lock file exists) at exactly
+/// that point.
+final class _PullProbingEngine implements DockerEngine {
+  _PullProbingEngine(this._inner, this._onPull);
+
+  final DockerEngine _inner;
+  final void Function() _onPull;
+
+  @override
+  Future<void> pullImage(String image) {
+    _onPull();
+    return _inner.pullImage(image);
+  }
+
+  @override
+  Future<void> ping() => _inner.ping();
+
+  @override
+  Future<EngineVersion> version() => _inner.version();
+
+  @override
+  Future<bool> imageExists(String image) => _inner.imageExists(image);
+
+  @override
+  Future<List<ContainerSummary>> listContainers({
+    Map<String, List<String>> filters = const {},
+    bool all = true,
+  }) => _inner.listContainers(filters: filters, all: all);
+
+  @override
+  Future<String> createContainer(
+    ContainerSpec spec,
+    Map<String, String> labels,
+  ) => _inner.createContainer(spec, labels);
+
+  @override
+  Future<void> startContainer(String id) => _inner.startContainer(id);
+
+  @override
+  Future<ContainerInspect> inspectContainer(String id) =>
+      _inner.inspectContainer(id);
+
+  @override
+  Future<String> logTail(String id, {int lines = 50}) =>
+      _inner.logTail(id, lines: lines);
+
+  @override
+  Future<void> stopContainer(
+    String id, {
+    Duration timeout = const Duration(seconds: 2),
+  }) => _inner.stopContainer(id, timeout: timeout);
+
+  @override
+  Future<void> removeContainer(String id) => _inner.removeContainer(id);
+
+  @override
+  Future<void> close() => _inner.close();
 }

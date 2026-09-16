@@ -41,6 +41,16 @@ final class AcquiredContainer {
 /// and the start: waiting for readiness happens after it is released, because
 /// a wait strategy is safe to run any number of times and holding the lock
 /// through a 60 second wait would stop every other suite.
+///
+/// Ensuring the image is present happens before the lock is taken, on the
+/// dedicated path too even though that path never locks at all. The lock's
+/// own timeouts assume it is held only across a create and a start — a few
+/// seconds — and a cold pull of a large image routinely takes longer than
+/// that, which would make every other shared suite fail with `LockTimeout`
+/// mid-pull, or start treating a live lock as stale. `pullImage` is
+/// idempotent and Docker coalesces concurrent pulls of the same reference,
+/// so nothing is lost by asking before knowing whether this call will end up
+/// reusing a container instead of creating one.
 Future<AcquiredContainer> acquireContainer({
   required ContainerSpec spec,
   required DockerEngine engine,
@@ -54,6 +64,8 @@ Future<AcquiredContainer> acquireContainer({
 
   final hash = specHash(spec);
   final labels = buildRigLabels(spec: spec, hash: hash, project: project);
+
+  await _ensureImage(spec.image, engine);
 
   final placed = spec.lifetime == Lifetime.dedicated
       // A private container cannot collide with anyone, so there is nothing
@@ -133,12 +145,17 @@ Future<_Placed> _create(
   Map<String, String> labels,
   DockerEngine engine,
 ) async {
-  if (!await engine.imageExists(spec.image)) {
-    await engine.pullImage(spec.image);
-  }
   final id = await engine.createContainer(spec, labels);
   await engine.startContainer(id);
   return (id: id, reused: false);
+}
+
+/// The image has to be there before create can succeed, but this runs
+/// before any lock is taken — see [acquireContainer]'s doc comment.
+Future<void> _ensureImage(String image, DockerEngine engine) async {
+  if (!await engine.imageExists(image)) {
+    await engine.pullImage(image);
+  }
 }
 
 void _markFailed(
