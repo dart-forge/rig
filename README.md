@@ -26,4 +26,11 @@ void main() {
 }
 ```
 
+## Testing
+
+```bash
+dart test --exclude-tags integration   # no Docker needed
+dart test --tags integration           # needs a running Docker daemon
+```
+
 Status: in development. Not yet published.
