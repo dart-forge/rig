@@ -181,6 +181,31 @@ void main() {
     );
   });
 
+  test(
+    'gives up instead of spinning when a stale lock cannot be removed',
+    () async {
+      // The stale branch retries with no sleep, so an undeletable stale lock
+      // would spin forever if the deadline were only checked on the waiting
+      // branch. An unwritable directory is the cheapest way to make the delete
+      // fail for real.
+      final dir = Directory(p.dirname(lockPath))..createSync(recursive: true);
+      Link(lockPath)
+          .createSync('held-at:2020-01-01T00:00:00.000Z|pid:1|token:dead');
+      await Process.run('chmod', ['500', dir.path]);
+      addTearDown(() => Process.run('chmod', ['700', dir.path]));
+
+      await expectLater(
+        withExclusiveLock(
+          lockPath,
+          () async => null,
+          timeout: const Duration(milliseconds: 200),
+          retryInterval: const Duration(milliseconds: 20),
+        ),
+        throwsA(isA<LockTimeout>()),
+      );
+    },
+  );
+
   test('takes over a lock whose marker is unreadable', () async {
     Link(lockPath)
       ..parent.createSync(recursive: true)

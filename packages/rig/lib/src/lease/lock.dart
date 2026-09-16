@@ -45,11 +45,18 @@ Future<T> withExclusiveLock<T>(
       }
     }
 
+    // Checked on every turn of the loop, not only on the waiting branch.
+    // The stale branch retries immediately so a crashed holder is recovered
+    // from fast — which means that without this it would spin without end
+    // whenever the stale lock cannot actually be deleted. Hanging is the one
+    // failure this library exists to remove, so no path may be unbounded.
+    if (!now().isBefore(deadline)) {
+      throw LockTimeout(lockPath: lockPath, waited: timeout);
+    }
+
     final held = _readTarget(link);
     if (held == null || _isStale(held, now(), staleAfter)) {
       breakStaleLockIfUnchanged(link, held);
-    } else if (!now().isBefore(deadline)) {
-      throw LockTimeout(lockPath: lockPath, waited: timeout);
     } else {
       await sleep(retryInterval);
     }
