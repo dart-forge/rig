@@ -186,6 +186,38 @@ void main() {
     timeout: const Timeout(Duration(minutes: 3)),
   );
 
+  group('useContainer', () {
+    // useContainer registers its own setUpAll/tearDownAll when it is called,
+    // so the spec (and its label) has to be built here, at declaration
+    // time, rather than inside a test or the outer setUpAll above.
+    final marker = 'usecontainer-${DateTime.now().microsecondsSinceEpoch}';
+    final leased = useContainer(
+      ContainerSpec(
+        image: 'redis:7-alpine',
+        exposedPorts: const [6379],
+        labels: {_ownLabel: marker},
+        healthcheck: const Healthcheck(
+          test: ['CMD-SHELL', 'redis-cli ping'],
+          interval: Duration(milliseconds: 250),
+          retries: 40,
+        ),
+        waitFor: const WaitFor.healthy(timeout: Duration(seconds: 60)),
+        lifetime: Lifetime.dedicated,
+      ),
+      project: 'rig_integration_use_container',
+    );
+
+    test('is the only call a consumer needs: it hands back a port a test '
+        'can actually connect to', () async {
+      final socket = await Socket.connect(
+        leased.host,
+        leased.port(6379),
+        timeout: const Duration(seconds: 5),
+      );
+      addTearDown(socket.destroy);
+    }, timeout: const Timeout(Duration(minutes: 3)));
+  });
+
   group('postgres', () {
     ContainerSpec postgres() => ContainerSpec(
       image: 'postgres:16-alpine',
