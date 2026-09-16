@@ -86,6 +86,19 @@ void main() {
     expect(output(), contains('exited'));
   });
 
+  test('falls back to the image when the summary label is empty', () async {
+    // RigLabels.tryParse reads a missing label as '', not null, so a plain
+    // `?? c.image` never catches this case.
+    engine.addContainer(
+      labels: {rigMarkerLabel: '1', rigHashLabel: 'h', rigSummaryLabel: ''},
+      image: 'postgres:16-alpine',
+    );
+
+    await ls();
+
+    expect(output(), contains('postgres:16-alpine'));
+  });
+
   test('renders ages under a day in hours', () async {
     engine.addContainer(
       labels: {rigMarkerLabel: '1', rigHashLabel: 'h'},

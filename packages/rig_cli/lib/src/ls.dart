@@ -32,9 +32,13 @@ Future<int> runLs({
 
 List<String> _row(ContainerSummary c, DateTime now) {
   final labels = RigLabels.tryParse(c.labels);
+  // RigLabels.tryParse reads a missing summary label as '', not null, so
+  // `?? c.image` never catches it. An empty summary is exactly as
+  // uninformative as a missing one.
+  final summary = labels?.summary ?? '';
   return [
     labels?.hash ?? '?',
-    labels?.summary ?? c.image,
+    summary.isEmpty ? c.image : summary,
     c.state,
     labels?.lifetime.name ?? '?',
     formatAge(now.difference(c.created)),
