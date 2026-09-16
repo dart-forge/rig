@@ -46,8 +46,10 @@ Future<int> runPrune({
     stateDir,
     forIds: {
       ...doomed.map((c) => c.id),
-      // A marker whose container is gone has nothing left to describe.
-      if (failedOnly) ...failedIds.where((id) => !held.any((c) => c.id == id)),
+      // A marker whose container is gone has nothing left to describe,
+      // whatever flags this run was given. Gating this on --failed would let
+      // markers pile up silently through ordinary use.
+      ...failedIds.where((id) => !held.any((c) => c.id == id)),
     },
   );
 

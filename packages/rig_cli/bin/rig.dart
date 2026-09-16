@@ -77,7 +77,15 @@ final class _PruneCommand extends Command<int> {
 
   @override
   Future<int> run() async {
-    final olderThan = parseDurationArg(argResults!.option('older-than')!);
+    // A bad duration is a usage mistake, so it exits like one — with the
+    // message and the usage text, not a stack trace.
+    final Duration olderThan;
+    try {
+      olderThan = parseDurationArg(argResults!.option('older-than')!);
+    } on FormatException catch (e) {
+      throw UsageException(e.message, usage);
+    }
+
     final engine = await connectToDocker();
     try {
       return await runPrune(

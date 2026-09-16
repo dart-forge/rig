@@ -147,6 +147,32 @@ void main() {
     });
   });
 
+  test('never touches a container whose labels are incomplete', () async {
+    // This one reaches the label filter — the marker key is there — but has
+    // no usable identity, so only the parse guard can exclude it. Without a
+    // test of its own, the filter would hide a regression here.
+    final partial = engine.addContainer(
+      labels: {rigMarkerLabel: '1'},
+      created: DateTime.utc(2020, 1, 1),
+    );
+
+    await prune(all: true);
+
+    expect(engine.calls.contains('remove:$partial'), isFalse);
+  });
+
+  test('clears a marker for a vanished container without any flag', () async {
+    state.failedMarker('vanished').writeAsStringSync('{}');
+
+    await prune();
+
+    expect(
+      state.failedMarker('vanished').existsSync(),
+      isFalse,
+      reason: 'markers must not pile up through ordinary use',
+    );
+  });
+
   test('clears failure markers for containers it removed', () async {
     final old = id('old', created: DateTime.utc(2026, 9, 1));
     state.failedMarker(old).writeAsStringSync('{}');

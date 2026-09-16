@@ -32,4 +32,17 @@ void main() {
   test('rejects a negative duration', () {
     expect(() => parseDurationArg('-1d'), throwsA(isA<FormatException>()));
   });
+
+  test('rejects a duration too large to parse, in its own words', () {
+    expect(
+      () => parseDurationArg('99999999999999999999999'),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.message,
+          'message',
+          contains('too large'),
+        ),
+      ),
+    );
+  });
 }
