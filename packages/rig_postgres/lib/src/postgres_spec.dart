@@ -14,6 +14,7 @@ ContainerSpec postgresSpec({
   String database = 'test_db',
   Lifetime lifetime = Lifetime.shared,
   PgTlsMaterial? tlsMaterial,
+  Map<String, String> labels = const {},
 }) {
   final setup = setupFor(auth);
   final flags = [
@@ -50,6 +51,7 @@ ContainerSpec postgresSpec({
       command: flags.isEmpty ? const [] : ['postgres', ...flags],
       exposedPorts: const [5432],
       tmpfs: tmpfs,
+      labels: labels,
       healthcheck: healthcheck,
       waitFor: waitFor,
       lifetime: lifetime,
@@ -87,6 +89,7 @@ ContainerSpec postgresSpec({
     ],
     exposedPorts: const [5432],
     tmpfs: tmpfs,
+    labels: labels,
     healthcheck: healthcheck,
     waitFor: waitFor,
     lifetime: lifetime,

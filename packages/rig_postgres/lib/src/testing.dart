@@ -35,6 +35,7 @@ PostgresLease usePostgres({
   StateDir? stateDir,
   String? project,
   PgTls? tls,
+  Map<String, String> labels = const {},
 }) {
   // Resolved before the spec is built: `ensureTlsMaterial` needs to know
   // where to cache the certificate, and `useContainer` needs a finished spec
@@ -54,6 +55,7 @@ PostgresLease usePostgres({
     database: database,
     lifetime: lifetime,
     tlsMaterial: tlsMaterial,
+    labels: labels,
   );
 
   final container = useContainer(spec, stateDir: stateDir, project: project);
