@@ -111,7 +111,7 @@ void main() {
 
         expect(result.exitCode, 0, reason: result.output);
         expect(result.output.trim(), 'ok');
-      }, timeout: const Timeout(Duration(minutes: 5)));
+      });
 
       test('stores the password in the form the mode requires', () async {
         // A connection succeeding is not evidence: with md5 in pg_hba and a
@@ -232,7 +232,7 @@ void main() {
         '0',
         reason: 'a suite must not see what another suite created',
       );
-    }, timeout: const Timeout(Duration(minutes: 5)));
+    });
   });
 
   group('a dedicated Postgres', () {
@@ -255,6 +255,6 @@ void main() {
       ]);
 
       expect(result.output.trim(), '20');
-    }, timeout: const Timeout(Duration(minutes: 5)));
+    });
   });
 }

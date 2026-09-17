@@ -1,4 +1,8 @@
 tags:
   integration:
-    # Needs a running Docker daemon, and pulling Postgres can be slow.
-    timeout: 5x
+    # Needs a running Docker daemon, and a cold pull of Postgres can be slow.
+    # This is the only timeout that covers setUpAll, where the pull, create,
+    # start, initdb and auth re-hash actually happen — a `Timeout` annotation
+    # on a test body replaces this factor rather than composing with it, so
+    # putting one there does nothing for setUpAll.
+    timeout: 10x
