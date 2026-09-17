@@ -15,12 +15,12 @@ final class RedisLease {
 
   /// The database index this suite should `SELECT`.
   ///
-  /// Always `0` for now — per-suite isolation across the [databases] a
-  /// container was given is not part of this module yet. Throws
+  /// `0` when this suite asked for `RedisIsolation.none`; otherwise an index
+  /// of this suite's own, claimed from the container's pool. Throws
   /// [LeaseNotBound] before `useRedis`'s setUpAll has run, exactly like every
   /// other accessor here: returning `0` unconditionally would let a helper
-  /// that captures it at declaration time look correct today and go on
-  /// working after isolation lands, without ever being told to ask again.
+  /// that captures it at declaration time look correct without ever being
+  /// told to ask again once the real index is known.
   int get database {
     final database = _database;
     if (database == null) throw const LeaseNotBound();

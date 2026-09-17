@@ -101,4 +101,81 @@ void main() {
       );
     });
   });
+
+  group('two suites on one container each get an index of their own', () {
+    // databases: 20 is not asked for anywhere else in this file, so these
+    // two suites are guaranteed a container to themselves rather than
+    // inheriting whatever index the groups above already claimed.
+    final first = useRedis(databases: 20);
+    final second = useRedis(databases: 20);
+
+    test(
+      "a key set at one suite's index is invisible at the other's",
+      () async {
+        expect(
+          first.container.containerId,
+          second.container.containerId,
+          reason: 'the same request should share one container',
+        );
+        expect(first.database, isNot(second.database));
+
+        final set = await first.container.exec([
+          'redis-cli',
+          '-n',
+          '${first.database}',
+          'SET',
+          'only-mine',
+          'first-suite',
+        ]);
+        expect(set.output.trim(), 'OK');
+
+        final lookedFromSecond = await second.container.exec([
+          'redis-cli',
+          '-n',
+          '${second.database}',
+          'GET',
+          'only-mine',
+        ]);
+        expect(
+          lookedFromSecond.output.trim(),
+          isEmpty,
+          reason:
+              'a suite must not see what another suite wrote at its own '
+              'index',
+        );
+      },
+    );
+  });
+
+  group('isolation: none shares the container database on purpose', () {
+    // databases: 21 is not asked for anywhere else in this file, for the
+    // same reason as the group above.
+    final first = useRedis(isolation: RedisIsolation.none, databases: 21);
+    final second = useRedis(isolation: RedisIsolation.none, databases: 21);
+
+    test('both suites see index 0, so a key set by one is visible to the '
+        'other', () async {
+      expect(first.database, 0);
+      expect(second.database, 0);
+
+      final set = await first.container.exec([
+        'redis-cli',
+        '-n',
+        '0',
+        'SET',
+        'shared',
+        'visible-to-both',
+      ]);
+      expect(set.output.trim(), 'OK');
+
+      final lookedFromSecond = await second.container.exec([
+        'redis-cli',
+        '-n',
+        '0',
+        'GET',
+        'shared',
+      ]);
+      expect(lookedFromSecond.output.trim(), 'visible-to-both');
+    });
+  });
 }
