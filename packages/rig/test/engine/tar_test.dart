@@ -241,7 +241,10 @@ void main() {
       expect(utf8.decode(entries.single.content), 'payload');
 
       final listing = await _listWithRealTar(tar);
-      expect(listing, matches(RegExp(r'\b1000\s+1000\b')));
+      // The two tars disagree on how to print an owner: BSD tar (macOS)
+      // separates uid and gid with spaces, GNU tar (Linux) with a slash.
+      // Accept either rather than pinning this test to one platform.
+      expect(listing, matches(RegExp(r'\b1000[/\s]+1000\b')));
       expect(listing.split('\n').first, startsWith('-rw-r--r--'));
     });
   });
