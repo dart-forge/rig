@@ -4,6 +4,7 @@ import 'package:rig/engine.dart';
 import 'package:rig/fake_engine.dart';
 import 'package:rig/rig.dart';
 import 'package:rig_postgres/rig_postgres.dart';
+import 'package:rig_postgres/src/testing.dart' show confirmAuthMode;
 import 'package:test/test.dart';
 
 final engine = FakeDockerEngine();
@@ -68,5 +69,50 @@ void main() {
     test('and then the container own database is used', () {
       expect(pg.database, 'test_db');
     });
+  });
+
+  group('confirmAuthMode quotes what it substitutes into SQL', () {
+    test(
+      'a password containing a quote does not break the statement',
+      () async {
+        final fake = FakeDockerEngine();
+        final containerId = fake.addContainer(labels: const {});
+
+        await confirmAuthMode(
+          engine: fake,
+          containerId: containerId,
+          auth: PgAuth.md5,
+          user: 'test',
+          password: "it's",
+          database: 'test_db',
+        );
+
+        final alter = fake.calls.firstWhere((c) => c.contains('ALTER USER'));
+        // Unescaped, this would reach the server as `PASSWORD 'it's'` — a
+        // syntax error the server reports as an unrecognised role option,
+        // pointing at the wrong cause entirely.
+        expect(alter, contains("PASSWORD 'it''s'"));
+      },
+    );
+
+    test(
+      'a user containing a double quote is quoted as an identifier',
+      () async {
+        final fake = FakeDockerEngine();
+        final containerId = fake.addContainer(labels: const {});
+
+        await confirmAuthMode(
+          engine: fake,
+          containerId: containerId,
+          auth: PgAuth.md5,
+          user: 'te"st',
+          password: 'hunter2',
+          database: 'test_db',
+        );
+
+        final alter = fake.calls.firstWhere((c) => c.contains('ALTER USER'));
+        expect(alter, contains('ALTER USER "te""st"'));
+      },
+    );
   });
 }

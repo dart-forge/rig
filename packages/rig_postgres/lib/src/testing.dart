@@ -148,6 +148,14 @@ Future<void> confirmAuthMode({
   final encryption = setupFor(auth).passwordEncryption;
   if (encryption == null) return;
 
+  // A SQL identifier is quoted by wrapping it in double quotes and doubling
+  // any that appear inside; a string literal, by doubling any single quotes
+  // inside. Without this, usePostgres(password: "it's") reaches the server as
+  // `PASSWORD 'it's'` — a syntax error the server reports as an unrecognised
+  // role option, which points at the wrong cause entirely.
+  final quotedUser = '"${user.replaceAll('"', '""')}"';
+  final quotedPassword = "'${password.replaceAll("'", "''")}'";
+
   final result = await engine.exec(containerId, [
     'psql',
     '-U',
@@ -159,7 +167,7 @@ Future<void> confirmAuthMode({
     '-c',
     "SET password_encryption='$encryption'",
     '-c',
-    "ALTER USER $user PASSWORD '$password'",
+    'ALTER USER $quotedUser PASSWORD $quotedPassword',
   ]);
 
   if (result.exitCode != 0) {
