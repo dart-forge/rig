@@ -31,6 +31,17 @@ enum HealthStatus {
   unhealthy,
 }
 
+/// What a command run inside a container produced.
+final class ExecResult {
+  const ExecResult({required this.exitCode, required this.output});
+
+  /// The command's exit status, or -1 when Docker did not report one.
+  final int exitCode;
+
+  /// Combined stdout and stderr, in arrival order.
+  final String output;
+}
+
 /// A container as it appears in a listing.
 final class ContainerSummary {
   const ContainerSummary({
@@ -117,6 +128,17 @@ abstract interface class DockerEngine {
 
   /// The last [lines] lines of the container's combined output.
   Future<String> logTail(String id, {int lines});
+
+  /// Runs [command] inside the container and waits for it to finish.
+  ///
+  /// Nothing is written to the command's stdin. That restriction is what lets
+  /// this use the ordinary HTTP client: Docker offers a hijacked bidirectional
+  /// stream for interactive execs, and avoiding it avoids writing a second
+  /// HTTP implementation.
+  ///
+  /// A non-zero exit code is returned, not thrown. Whether a failed command is
+  /// an error depends on what was asked, so the caller decides.
+  Future<ExecResult> exec(String id, List<String> command);
 
   Future<void> stopContainer(String id, {Duration timeout});
 

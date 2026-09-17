@@ -865,4 +865,152 @@ void main() {
       );
     });
   });
+
+  group('exec', () {
+    Map<String, Object?> lastBodyFor(String pathPrefix) =>
+        server.requests.lastWhere((r) => r.path.startsWith(pathPrefix)).json;
+
+    test('creates the exec, starts it, and reads the exit code', () async {
+      server.on(
+        'POST',
+        '/v1.44/containers/abc/exec',
+        status: 201,
+        json: {'Id': 'exec123'},
+      );
+      server.on('POST', '/v1.44/exec/exec123/start', body: '');
+      server.on('GET', '/v1.44/exec/exec123/json', json: {'ExitCode': 0});
+
+      final result = await engine.exec('abc', ['psql', '-c', 'SELECT 1']);
+
+      expect(result.exitCode, 0);
+    });
+
+    test('asks for both output streams and no tty', () async {
+      server.on(
+        'POST',
+        '/v1.44/containers/abc/exec',
+        status: 201,
+        json: {'Id': 'exec123'},
+      );
+      server.on('POST', '/v1.44/exec/exec123/start', body: '');
+      server.on('GET', '/v1.44/exec/exec123/json', json: {'ExitCode': 0});
+
+      await engine.exec('abc', ['psql', '-c', 'SELECT 1']);
+
+      final created = lastBodyFor('/v1.44/containers/abc/exec');
+      expect(created['AttachStdout'], isTrue);
+      expect(created['AttachStderr'], isTrue);
+      expect(created['Tty'], isFalse);
+      expect(created['Cmd'], ['psql', '-c', 'SELECT 1']);
+
+      final started = lastBodyFor('/v1.44/exec/exec123/start');
+      expect(
+        started['Detach'],
+        isFalse,
+        reason: 'detaching would leave nothing to read the output from',
+      );
+      expect(started['Tty'], isFalse);
+    });
+
+    test('decodes the framed output', () async {
+      // Docker frames a non-tty exec's output exactly like a container's logs.
+      final framed = <int>[
+        1, 0, 0, 0, 0, 0, 0, 15, // stdout, 15 bytes
+        ...'CREATE DATABASE'.codeUnits,
+      ];
+      server.on(
+        'POST',
+        '/v1.44/containers/abc/exec',
+        status: 201,
+        json: {'Id': 'exec123'},
+      );
+      server.on(
+        'POST',
+        '/v1.44/exec/exec123/start',
+        body: String.fromCharCodes(framed),
+      );
+      server.on('GET', '/v1.44/exec/exec123/json', json: {'ExitCode': 0});
+
+      final result = await engine.exec('abc', ['psql']);
+
+      expect(result.output, 'CREATE DATABASE');
+    });
+
+    test('returns a non-zero exit code rather than throwing', () async {
+      // Whether a failed command is an error depends on what was asked; the
+      // caller decides, so this reports and does not judge.
+      server.on(
+        'POST',
+        '/v1.44/containers/abc/exec',
+        status: 201,
+        json: {'Id': 'exec123'},
+      );
+      server.on('POST', '/v1.44/exec/exec123/start', body: '');
+      server.on('GET', '/v1.44/exec/exec123/json', json: {'ExitCode': 1});
+
+      final result = await engine.exec('abc', ['false']);
+
+      expect(result.exitCode, 1);
+    });
+
+    test('throws when the exec cannot be created', () async {
+      server.on(
+        'POST',
+        '/v1.44/containers/abc/exec',
+        status: 409,
+        json: {'message': 'Container abc is not running'},
+      );
+
+      await expectLater(
+        engine.exec('abc', ['psql']),
+        throwsA(
+          isA<EngineError>().having(
+            (e) => e.body,
+            'body',
+            contains('not running'),
+          ),
+        ),
+      );
+    });
+
+    test('throws when the create response carries no id', () async {
+      server.on(
+        'POST',
+        '/v1.44/containers/abc/exec',
+        status: 201,
+        json: {'Warnings': <String>[]},
+      );
+
+      await expectLater(
+        engine.exec('abc', ['psql']),
+        throwsA(
+          isA<EngineError>().having(
+            (e) => e.body,
+            'body',
+            contains('no exec id'),
+          ),
+        ),
+      );
+    });
+
+    test(
+      'reports an unreadable exit code as -1 rather than guessing 0',
+      () async {
+        // Reporting success for a command whose result is unknown would be the
+        // one wrong answer here.
+        server.on(
+          'POST',
+          '/v1.44/containers/abc/exec',
+          status: 201,
+          json: {'Id': 'exec123'},
+        );
+        server.on('POST', '/v1.44/exec/exec123/start', body: '');
+        server.on('GET', '/v1.44/exec/exec123/json', json: {'Running': true});
+
+        final result = await engine.exec('abc', ['psql']);
+
+        expect(result.exitCode, -1);
+      },
+    );
+  });
 }

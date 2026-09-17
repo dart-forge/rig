@@ -350,6 +350,10 @@ final class _PullProbingEngine implements DockerEngine {
       _inner.logTail(id, lines: lines);
 
   @override
+  Future<ExecResult> exec(String id, List<String> command) =>
+      _inner.exec(id, command);
+
+  @override
   Future<void> stopContainer(
     String id, {
     Duration timeout = const Duration(seconds: 2),

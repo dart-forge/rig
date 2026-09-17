@@ -273,5 +273,24 @@ void main() {
         reason: 'a missing pg_isready would leave health at starting',
       );
     }, timeout: const Timeout(Duration(minutes: 5)));
+
+    test('runs a command inside the container and reads its output', () async {
+      // The Postgres module creates its per-suite database this way, so the
+      // path matters more than the one command being run here.
+      final acquired = await acquire(postgres());
+
+      final result = await engine.exec(acquired.containerId, [
+        'psql',
+        '-U',
+        'test',
+        '-d',
+        'test_db',
+        '-tAc',
+        "SELECT 'exec ok'",
+      ]);
+
+      expect(result.exitCode, 0);
+      expect(result.output.trim(), 'exec ok');
+    }, timeout: const Timeout(Duration(minutes: 5)));
   });
 }

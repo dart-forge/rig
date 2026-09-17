@@ -34,6 +34,12 @@ final class FakeDockerEngine implements DockerEngine {
   /// When set, [removeContainer] throws it instead of removing anything.
   Object? removeError;
 
+  /// Answers [exec]. Defaults to success with no output.
+  ///
+  /// The fake runs nothing, so a test states what the command would have done.
+  ExecResult Function(List<String> command) onExec = (_) =>
+      const ExecResult(exitCode: 0, output: '');
+
   /// The last [createContainer] arguments, for assertions.
   ContainerSpec? lastCreatedSpec;
   Map<String, String>? lastCreatedLabels;
@@ -184,6 +190,13 @@ final class FakeDockerEngine implements DockerEngine {
   @override
   Future<String> logTail(String id, {int lines = 50}) async =>
       _require(id).logs;
+
+  @override
+  Future<ExecResult> exec(String id, List<String> command) async {
+    calls.add('exec:$id:${command.join(' ')}');
+    _require(id);
+    return onExec(command);
+  }
 
   @override
   Future<void> stopContainer(

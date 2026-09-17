@@ -276,6 +276,49 @@ final class HttpDockerEngine implements DockerEngine {
   }
 
   @override
+  Future<ExecResult> exec(String id, List<String> command) async {
+    final created = await _sendOk(
+      'POST',
+      '/containers/$id/exec',
+      body: {
+        'AttachStdout': true,
+        'AttachStderr': true,
+        'Tty': false,
+        'Cmd': command,
+      },
+    );
+
+    final decoded = jsonDecode(created.text);
+    final execId = decoded is Map<String, Object?> ? decoded['Id'] : null;
+    if (execId is! String || execId.isEmpty) {
+      throw EngineError(
+        method: 'POST',
+        path: created.path,
+        statusCode: created.statusCode,
+        body: 'exec create returned no exec id: ${created.text}',
+      );
+    }
+
+    // Detach: false keeps the output on this response. Docker calls this a
+    // hijacked stream, but with no stdin to write it reads like any other body.
+    final started = await _sendOk(
+      'POST',
+      '/exec/$execId/start',
+      body: {'Detach': false, 'Tty': false},
+    );
+
+    final inspected = await _getJsonMap('/exec/$execId/json');
+    final code = inspected['ExitCode'];
+
+    return ExecResult(
+      // Never guess 0: reporting success for a command whose result is unknown
+      // is the one wrong answer available here.
+      exitCode: code is int ? code : -1,
+      output: demuxLogFrames(started.bytes),
+    );
+  }
+
+  @override
   Future<void> stopContainer(
     String id, {
     // A container whose entrypoint is PID 1 with no SIGTERM handler ignores

@@ -189,4 +189,34 @@ void main() {
 
     expect(await engine.logTail(id), 'FATAL: nope');
   });
+
+  test('exec answers with what the test scripted', () async {
+    final id = engine.addContainer(labels: const {});
+    engine.onExec = (command) => command.any((c) => c.contains('CREATE'))
+        ? const ExecResult(exitCode: 0, output: 'CREATE DATABASE')
+        : const ExecResult(exitCode: 1, output: 'nope');
+
+    expect(
+      (await engine.exec(id, ['psql', '-c', 'CREATE DATABASE x'])).output,
+      'CREATE DATABASE',
+    );
+    expect((await engine.exec(id, ['psql', '-c', 'SELECT 1'])).exitCode, 1);
+  });
+
+  test('exec defaults to success with no output', () async {
+    final id = engine.addContainer(labels: const {});
+
+    final result = await engine.exec(id, ['true']);
+
+    expect(result.exitCode, 0);
+    expect(result.output, isEmpty);
+  });
+
+  test('exec records the command it was given', () async {
+    final id = engine.addContainer(labels: const {});
+
+    await engine.exec(id, ['psql', '-c', 'SELECT 1']);
+
+    expect(engine.calls, contains('exec:$id:psql -c SELECT 1'));
+  });
 }
