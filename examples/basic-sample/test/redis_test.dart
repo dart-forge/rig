@@ -1,6 +1,6 @@
 // Declare the container your test needs, then talk to it.
 //
-// Run it: `dart test example` from this package's directory. It is a test
+// Run it: `dart test` from examples/basic-sample. It is a test
 // rather than a script because that is how rig is used — `useContainer` calls
 // `setUpAll` — and because CI runs it, which keeps it honest as the API moves.
 @Tags(['integration'])

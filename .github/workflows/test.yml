@@ -55,15 +55,12 @@ jobs:
         working-directory: packages/rig_postgres
         run: dart test
 
-      # `dart test` only looks in test/, so the examples need naming. They run
-      # here so that an example cannot quietly stop compiling as the API moves.
-      - name: Example (rig)
-        working-directory: packages/rig
-        run: dart test example
-
-      - name: Example (rig_postgres)
-        working-directory: packages/rig_postgres
-        run: dart test example
+      # The examples are a workspace package whose content is tests, so they
+      # run like any other package. They run here so that an example cannot
+      # quietly stop compiling as the API moves.
+      - name: Test examples/basic-sample
+        working-directory: examples/basic-sample
+        run: dart test
 
       - name: Containers left behind
         # Not an assertion — rig leaves containers running on purpose, and on a

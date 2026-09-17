@@ -1,0 +1,4 @@
+tags:
+  integration:
+    # Needs a running Docker daemon, and a cold pull can be slow.
+    timeout: 10x

@@ -6,3 +6,4 @@ workspace:
   - packages/rig
   - packages/rig_cli
   - packages/rig_postgres
+  - examples/basic-sample

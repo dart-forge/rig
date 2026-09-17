@@ -1,0 +1,14 @@
+name: basic_sample
+description: The smallest thing that shows what rig does — a container declared in a test.
+publish_to: none
+
+environment:
+  sdk: ^3.13.0
+
+resolution: workspace
+
+dev_dependencies:
+  lints: ^5.0.0
+  rig: any
+  rig_postgres: any
+  test: ^1.25.0

@@ -1,7 +1,7 @@
 // A Postgres configured the way your test needs it, with a database of its
 // own.
 //
-// Run it: `dart test example` from this package's directory. It is a test
+// Run it: `dart test` from examples/basic-sample. It is a test
 // rather than a script because that is how the module is used — `usePostgres`
 // calls `setUpAll` — and because CI runs it, which keeps it honest.
 @Tags(['integration'])
