@@ -2,3 +2,13 @@ tags:
   integration:
     # Needs a running Docker daemon, and a cold pull can be slow.
     timeout: 10x
+  destructive:
+    # `rig prune --all` is machine-wide by definition: it removes every
+    # container rig holds, without looking at whether anything is using one.
+    # A test of it cannot be scoped to its own containers, so it would take
+    # away the containers another suite — in this repo or another project — is
+    # using right now, and that suite would fail somewhere unrelated. Skipped
+    # by default for that reason; CI runs it on a throwaway runner, after
+    # every other package's tests are done.
+    skip: "Removes every container rig holds on this machine. Run with: dart test -t destructive --run-skipped"
+    timeout: 10x

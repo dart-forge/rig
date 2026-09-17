@@ -62,6 +62,14 @@ jobs:
         working-directory: examples/basic-sample
         run: dart test
 
+      # Last, and only here: this removes every container rig holds on the
+      # machine, so it must not run while another package's tests are using
+      # one. A throwaway runner has nothing to lose by then; a developer's
+      # machine does, which is why it is skipped by default.
+      - name: Test rig_cli (destructive)
+        working-directory: packages/rig_cli
+        run: dart test -t destructive --run-skipped
+
       - name: Containers left behind
         # Not an assertion — rig leaves containers running on purpose, and on a
         # throwaway runner that costs nothing. Printed so a failing run shows

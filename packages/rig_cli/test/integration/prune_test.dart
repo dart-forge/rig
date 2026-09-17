@@ -1,4 +1,4 @@
-@Tags(['integration'])
+@Tags(['integration', 'destructive'])
 library;
 
 import 'dart:io';
