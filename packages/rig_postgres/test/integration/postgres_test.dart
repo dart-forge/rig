@@ -1,6 +1,9 @@
 @Tags(['integration'])
 library;
 
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:rig/engine.dart';
 import 'package:rig/rig.dart';
 import 'package:rig_postgres/rig_postgres.dart';
@@ -43,6 +46,31 @@ void main() {
     sql,
   ]);
 
+  /// Sends a Postgres SSLRequest packet over [host]:[port] and returns the
+  /// single byte the server answers with: `S` if it will negotiate TLS, `N`
+  /// if it will not.
+  ///
+  /// Every other check in this file runs inside the container over the unix
+  /// socket or 127.0.0.1, which never exercises `pg.host`/`pg.port` — the
+  /// module's whole product — against a real daemon. This does, without
+  /// needing a Postgres client library: an SSLRequest is eight bytes and its
+  /// reply is one, so a bare Socket is enough to prove something real is
+  /// listening on the mapped host port and that it speaks the protocol.
+  Future<int> sslNegotiationByte(String host, int port) async {
+    final socket = await Socket.connect(host, port);
+    try {
+      final packet = ByteData(8)
+        ..setInt32(0, 8)
+        ..setInt32(4, 80877103);
+      socket.add(packet.buffer.asUint8List());
+      await socket.flush();
+      final reply = await socket.first;
+      return reply.first;
+    } finally {
+      socket.destroy();
+    }
+  }
+
   Future<String> storedVerifier(String containerId) async {
     final result = await engine.exec(containerId, [
       'psql',
@@ -83,10 +111,20 @@ void main() {
         expect(stored, switch (auth) {
           PgAuth.md5 => 'md5',
           PgAuth.scram => 'scram',
-          // Cleartext compares against whatever is stored.
+          // Cleartext compares against whatever is stored, and there is
+          // nothing else to assert about this mode: it accepts the password
+          // as-is, so there is no re-hashing step to check either way.
           PgAuth.password => anyOf('scram', 'md5'),
         });
-      }, timeout: const Timeout(Duration(minutes: 5)));
+      });
+
+      test('a real Postgres answers on the mapped host port', () async {
+        // pg.host and pg.port are the module's whole product, and every
+        // other assertion in this file runs inside the container instead of
+        // through them.
+        final answer = await sslNegotiationByte(pg.host, pg.port);
+        expect(answer, 'N'.codeUnitAt(0), reason: 'no TLS was asked for');
+      });
     });
   }
 
@@ -124,6 +162,11 @@ void main() {
       expect(required.output.trim(), 'tls ok');
 
       expect(await storedVerifier(pg.container.containerId), 'md5');
+    });
+
+    test('offers TLS on the mapped host port', () async {
+      final answer = await sslNegotiationByte(pg.host, pg.port);
+      expect(answer, 'S'.codeUnitAt(0), reason: 'a TLS certificate was given');
     });
 
     test('verbose logging also survived the wrapper', () async {
