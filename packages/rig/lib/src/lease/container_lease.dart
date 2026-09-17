@@ -25,10 +25,10 @@ final class ContainerLease {
 
   /// A lease over a container that is already running.
   ///
-  /// Module and `useContainer` plumbing, not for a test to call: its
-  /// signature names [DockerEngine] and [AcquiredContainer], which the
-  /// stable `rig` library does not export.
-  @internal
+  /// For a module that acquires its own container and wants to hand the caller
+  /// something that speaks its own vocabulary. Not annotated internal for that
+  /// reason: a module in another package is outside this one, which is exactly
+  /// who this is for.
   ContainerLease.of(DockerEngine engine, AcquiredContainer acquired)
     : _engineOf = (() => engine),
       _acquired = acquired;

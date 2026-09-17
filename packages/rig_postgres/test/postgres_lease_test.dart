@@ -10,7 +10,6 @@ void main() {
   setUp(() => engine = FakeDockerEngine());
 
   ContainerLease leaseFor({Map<int, int> ports = const {5432: 54321}}) =>
-      // ignore: invalid_use_of_internal_member
       ContainerLease.of(
         engine,
         AcquiredContainer(
