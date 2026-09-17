@@ -1,9 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:rig/rig.dart';
+
+final Random _tokens = Random();
 
 /// Ask for a server certificate rig generates itself.
 final class PgTls {
@@ -63,6 +66,14 @@ final class OpensslFailed extends RigException {
 /// anything in — so the paths have to be known by then. It costs one openssl
 /// run on a machine that has never generated this material, and a file
 /// existence check on every run after that.
+///
+/// Safe against two isolates racing to generate the same material on a fresh
+/// machine: `withExclusiveLock` is async and this call is deliberately not,
+/// so generation happens into a private temporary directory and only the
+/// final `renameSync` into the shared, fingerprinted path is visible to a
+/// concurrent caller. Two callers can each run openssl, but only one
+/// directory ever lands at the shared path, and it is always a complete one
+/// — never a certificate from one attempt paired with a key from another.
 PgTlsMaterial ensureTlsMaterial(
   PgTls tls, {
   required StateDir stateDir,
@@ -76,7 +87,17 @@ PgTlsMaterial ensureTlsMaterial(
     return PgTlsMaterial(certificate: certificate, privateKey: privateKey);
   }
 
-  dir.createSync(recursive: true);
+  dir.parent.createSync(recursive: true);
+  final tmpDir = Directory(
+    p.join(
+      dir.parent.path,
+      '.tmp-${_tokens.nextInt(1 << 32).toRadixString(16)}',
+    ),
+  );
+  tmpDir.createSync(recursive: true);
+  final tmpCertificate = File(p.join(tmpDir.path, 'server.crt'));
+  final tmpPrivateKey = File(p.join(tmpDir.path, 'server.key'));
+
   final runner = run ?? _runOpenssl;
   final ProcessResult result;
   try {
@@ -90,24 +111,36 @@ PgTlsMaterial ensureTlsMaterial(
       '-subj',
       '/CN=${tls.commonName}',
       '-out',
-      certificate.path,
+      tmpCertificate.path,
       '-keyout',
-      privateKey.path,
+      tmpPrivateKey.path,
     ]);
   } on ProcessException catch (e) {
-    _clear(dir);
+    _clear(tmpDir);
     throw OpensslMissing(detail: e.message);
   }
 
   if (result.exitCode != 0 ||
-      !certificate.existsSync() ||
-      !privateKey.existsSync()) {
-    // A half-written cache is worse than none: it would be mounted, the server
-    // would refuse to start, and nothing would say why.
-    _clear(dir);
+      !tmpCertificate.existsSync() ||
+      !tmpPrivateKey.existsSync()) {
+    // A half-written attempt is worse than none: it would be mounted, the
+    // server would refuse to start, and nothing would say why. Only the
+    // temporary directory is ever discarded here — never the shared one,
+    // which another caller may already have finished writing.
+    _clear(tmpDir);
     throw OpensslFailed(
       output: [result.stderr, result.stdout].join('\n').trim(),
     );
+  }
+
+  try {
+    tmpDir.renameSync(dir.path);
+  } on FileSystemException {
+    // Another caller's renameSync won the race. What is now at the shared
+    // path is a complete pair from whichever caller got there first — never
+    // a mix of this attempt's certificate and someone else's key, because
+    // each attempt only ever writes into its own temporary directory.
+    _clear(tmpDir);
   }
 
   return PgTlsMaterial(certificate: certificate, privateKey: privateKey);

@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:rig/rig.dart';
 import 'package:rig_postgres/src/pg_tls.dart';
 import 'package:test/test.dart';
@@ -117,6 +118,66 @@ void main() {
       ),
     );
   });
+
+  test(
+    'a caller that loses the rename race keeps the winner intact, not a mix',
+    () {
+      // Discover the shared, fingerprinted destination first, the same way a
+      // normal run would, then clear it so the race can be staged against a
+      // known path.
+      ProcessResult discover(String exe, List<String> args) {
+        File(args[args.indexOf('-out') + 1]).writeAsStringSync('CERT');
+        File(args[args.indexOf('-keyout') + 1]).writeAsStringSync('KEY');
+        return ProcessResult(0, 0, '', '');
+      }
+
+      const tls = PgTls.selfSigned();
+      final destination = ensureTlsMaterial(
+        tls,
+        stateDir: state,
+        run: discover,
+      ).certificate.parent;
+      destination.deleteSync(recursive: true);
+
+      // Models two isolates racing on a fresh machine: both see no cache and
+      // both run openssl. This fake stands in for that interleaving —
+      // while this caller's own attempt is still running, a concurrent
+      // caller finishes first and renames its (different) material into the
+      // shared destination.
+      ProcessResult fakeOpenssl(String exe, List<String> args) {
+        destination.createSync(recursive: true);
+        File(p.join(destination.path, 'server.crt'))
+            .writeAsStringSync('CERT_WINNER');
+        File(p.join(destination.path, 'server.key'))
+            .writeAsStringSync('KEY_WINNER');
+
+        // This attempt's own material, written only to its own temporary
+        // directory — never directly to the shared destination.
+        File(args[args.indexOf('-out') + 1]).writeAsStringSync('CERT_LOSER');
+        File(args[args.indexOf('-keyout') + 1]).writeAsStringSync('KEY_LOSER');
+        return ProcessResult(0, 0, '', '');
+      }
+
+      final material = ensureTlsMaterial(
+        tls,
+        stateDir: state,
+        run: fakeOpenssl,
+      );
+
+      // The pair actually mounted is the winner's, whole and matched — never
+      // this caller's own certificate or key, and never one of each.
+      expect(material.certificate.readAsStringSync(), 'CERT_WINNER');
+      expect(material.privateKey.readAsStringSync(), 'KEY_WINNER');
+
+      // Nothing but the winner's own directory is left in the certs dir:
+      // this caller's temporary directory was discarded, not left to litter
+      // the cache.
+      expect(
+        state.certsDir.listSync().whereType<Directory>().map((d) => d.path),
+        [destination.path],
+      );
+    },
+  );
 
   test('does not leave half-written material behind on failure', () {
     var attempt = 0;
