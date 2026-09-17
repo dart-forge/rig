@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../spec/container_spec.dart';
 import '../spec/labels.dart';
 
@@ -170,6 +172,17 @@ abstract interface class DockerEngine {
   /// A non-zero exit code is returned, not thrown. Whether a failed command is
   /// an error depends on what was asked, so the caller decides.
   Future<ExecResult> exec(String id, List<String> command);
+
+  /// Writes [tarBytes] — a ustar archive — into the container, at [path].
+  ///
+  /// [path] must already exist inside the container as a directory: that
+  /// is Docker's own rule for `PUT /containers/{id}/archive`, not something
+  /// rig adds. Throws [CopyDestinationNotFound] when it does not.
+  Future<void> putArchive(String id, String path, List<int> tarBytes);
+
+  /// Reads the file or directory at [path] out of the container, as a
+  /// ustar archive — what `GET /containers/{id}/archive` returns.
+  Future<Uint8List> getArchive(String id, String path);
 
   Future<void> stopContainer(String id, {Duration timeout});
 

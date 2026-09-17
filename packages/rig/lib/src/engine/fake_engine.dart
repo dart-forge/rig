@@ -1,6 +1,11 @@
+import 'dart:typed_data';
+
+import 'package:path/path.dart' as p;
+
 import '../errors.dart';
 import '../spec/container_spec.dart';
 import 'docker_engine.dart';
+import 'tar.dart';
 
 /// An in-memory [DockerEngine] for tests.
 ///
@@ -129,6 +134,32 @@ final class FakeDockerEngine implements DockerEngine {
     _require(id).logs = logs;
   }
 
+  /// Makes [id] behave as if [path] already exists as a directory, so a
+  /// test can exercise [putArchive] without going through a real `mkdir`.
+  /// The root `/` is already present on every container.
+  void addDirectory(String id, String path) {
+    _require(id).directories.add(p.posix.normalize(path));
+  }
+
+  /// Seeds [id] with a file at [path], so a test can exercise [getArchive]
+  /// (via `ContainerLease.getFile`) without a prior [putArchive].
+  void addFile(String id, String path, List<int> content) {
+    _require(id).files[p.posix.normalize(path)] = content;
+  }
+
+  /// Makes [getArchive] return [tarBytes] verbatim for [path], instead of
+  /// wrapping single-file content the way it normally does.
+  ///
+  /// For a test that needs to see what `ContainerLease.getFile` does with
+  /// an archive holding more than one entry — the shape Docker sends back
+  /// for a directory — which a single seeded file can never produce on its
+  /// own.
+  void addRawArchive(String id, String path, List<int> tarBytes) {
+    _require(id).rawArchives[p.posix.normalize(path)] = Uint8List.fromList(
+      tarBytes,
+    );
+  }
+
   @override
   Future<void> ping() async {
     calls.add('ping');
@@ -253,6 +284,49 @@ final class FakeDockerEngine implements DockerEngine {
     calls.add('exec:$id:${command.join(' ')}');
     _require(id);
     return onExec(command);
+  }
+
+  @override
+  Future<void> putArchive(String id, String path, List<int> tarBytes) async {
+    calls.add('putArchive:$id:$path');
+    final c = _require(id);
+    final dir = p.posix.normalize(path);
+    if (!c.directories.contains(dir)) {
+      throw CopyDestinationNotFound(containerId: id, directory: path);
+    }
+    for (final entry in readTarEntries(Uint8List.fromList(tarBytes))) {
+      final full = p.posix.normalize(p.posix.join(dir, entry.name));
+      if (entry.isDirectory) {
+        c.directories.add(full);
+      } else {
+        c.files[full] = entry.content;
+      }
+    }
+  }
+
+  @override
+  Future<Uint8List> getArchive(String id, String path) async {
+    calls.add('getArchive:$id:$path');
+    final c = _require(id);
+    final full = p.posix.normalize(path);
+    final raw = c.rawArchives[full];
+    if (raw != null) return raw;
+    final content = c.files[full];
+    if (content == null) {
+      throw EngineError(
+        method: 'GET',
+        path: '/containers/$id/archive',
+        statusCode: 404,
+        body: 'Could not find the file $path in container $id',
+      );
+    }
+    return singleFileArchive(
+      path: p.posix.basename(full),
+      content: content,
+      mode: 0x1A4, // 644
+      uid: 0,
+      gid: 0,
+    );
   }
 
   @override
@@ -406,6 +480,18 @@ final class _FakeContainer {
   /// The Docker network name (already `rig-`-prefixed) this container was
   /// created on, or null when its spec had none.
   final String? network;
+
+  /// Directories [putArchive] may write into. Every container starts with
+  /// just the root, mirroring a real one: rig does not invent directories
+  /// that were never created inside it.
+  final Set<String> directories = {'/'};
+
+  /// Files written by [putArchive] (or seeded by [addFile]), by absolute
+  /// path, for [getArchive] to read back.
+  final Map<String, List<int>> files = {};
+
+  /// Verbatim archives [getArchive] returns, seeded by [addRawArchive].
+  final Map<String, Uint8List> rawArchives = {};
 
   /// Pops the next queued status, holding the last one once exhausted.
   HealthStatus nextHealth() {

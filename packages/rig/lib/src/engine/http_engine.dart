@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import '../errors.dart';
 import '../spec/container_spec.dart';
@@ -335,6 +336,39 @@ final class HttpDockerEngine implements DockerEngine {
       exitCode: code is int ? code : -1,
       output: demuxLogFrames(started.bytes),
     );
+  }
+
+  @override
+  Future<void> putArchive(String id, String path, List<int> tarBytes) async {
+    final res = await _sendBytes(
+      'PUT',
+      '/containers/$id/archive?${_query({'path': path})}',
+      bytes: tarBytes,
+      contentType: 'application/x-tar',
+    );
+    // Docker's own 404 body calls the missing destination "the file", which
+    // is backwards from what actually happened: the destination has to
+    // already exist as a directory, and rig says that plainly instead.
+    if (res.statusCode == 404) {
+      throw CopyDestinationNotFound(containerId: id, directory: path);
+    }
+    if (res.statusCode >= 400) {
+      throw EngineError(
+        method: 'PUT',
+        path: res.path,
+        statusCode: res.statusCode,
+        body: res.text,
+      );
+    }
+  }
+
+  @override
+  Future<Uint8List> getArchive(String id, String path) async {
+    final res = await _sendOk(
+      'GET',
+      '/containers/$id/archive?${_query({'path': path})}',
+    );
+    return Uint8List.fromList(res.bytes);
   }
 
   @override

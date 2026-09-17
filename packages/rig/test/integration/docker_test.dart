@@ -1,6 +1,7 @@
 @Tags(['integration'])
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -279,6 +280,158 @@ void main() {
               .having((e) => e.message, 'message', contains('3')),
         ),
       );
+    }, timeout: const Timeout(Duration(minutes: 3)));
+  });
+
+  group('ContainerLease file copy', () {
+    test('a file written with putFile reads back identically through exec '
+        'cat', () async {
+      final acquired = await acquire(alpine(marker: 'putfile-basic'));
+      final lease = ContainerLease.of(engine, acquired);
+
+      await lease.putFile('/tmp/greeting.txt', utf8.encode('hello, rig'));
+      final result = await lease.exec(['cat', '/tmp/greeting.txt']);
+
+      expect(result.output, 'hello, rig');
+    }, timeout: const Timeout(Duration(minutes: 3)));
+
+    test('putFile\'s uid/gid decide whether a non-root process can read the '
+        'file at all: root-owned is unreadable, owner-matched is readable — '
+        'both outcomes are needed, or a pass here cannot tell "the uid '
+        'setting worked" from "it would have been readable anyway"', () async {
+      final acquired = await acquire(
+        alpine(marker: 'putfile-owner').copyWith(user: '1000:1000'),
+      );
+      final lease = ContainerLease.of(engine, acquired);
+
+      // Default uid/gid (0:0): root-owned, 600 — unreadable to the
+      // non-root user this container runs as.
+      await lease.putFile(
+        '/tmp/root-owned.txt',
+        utf8.encode('root secret'),
+        mode: '600',
+      );
+      final asRoot = await lease.exec([
+        'cat',
+        '/tmp/root-owned.txt',
+      ], expectSuccess: false);
+
+      // uid/gid set to match the container's own user: same mode, same
+      // content, and this time readable.
+      await lease.putFile(
+        '/tmp/owned-by-1000.txt',
+        utf8.encode('owned secret'),
+        mode: '600',
+        uid: 1000,
+        gid: 1000,
+      );
+      final asOwner = await lease.exec([
+        'cat',
+        '/tmp/owned-by-1000.txt',
+      ], expectSuccess: false);
+
+      // Both outcomes go in the report, per the design this implements:
+      // this is the only evidence in the repository that setting uid/gid
+      // is what made the difference, rather than the file being readable
+      // regardless.
+      // ignore: avoid_print
+      print(
+        'root-owned (uid/gid not set): exit=${asRoot.exitCode} '
+        'output=${asRoot.output.trim()}',
+      );
+      // ignore: avoid_print
+      print(
+        'owned by 1000:1000 (uid/gid set): exit=${asOwner.exitCode} '
+        'output=${asOwner.output.trim()}',
+      );
+
+      expect(
+        asRoot.exitCode,
+        isNot(0),
+        reason: 'a 600 file owned by root must not be readable by uid 1000',
+      );
+      expect(asRoot.output, isNot(contains('root secret')));
+
+      expect(
+        asOwner.exitCode,
+        0,
+        reason:
+            'setting uid/gid to 1000 is what should make this '
+            'readable by the container\'s own (non-root) user',
+      );
+      expect(asOwner.output, 'owned secret');
+    }, timeout: const Timeout(Duration(minutes: 3)));
+
+    test('getFile reads back what exec wrote inside the container, matching '
+        'byte for byte', () async {
+      final acquired = await acquire(alpine(marker: 'getfile-basic'));
+      final lease = ContainerLease.of(engine, acquired);
+
+      await lease.exec([
+        'sh',
+        '-c',
+        "printf 'made inside the container' > /tmp/inside.txt",
+      ]);
+
+      final bytes = await lease.getFile('/tmp/inside.txt');
+
+      expect(utf8.decode(bytes), 'made inside the container');
+    }, timeout: const Timeout(Duration(minutes: 3)));
+
+    test('putFile into a destination whose directory does not exist gets '
+        'rig\'s own error, not Docker\'s raw 404 (which confusingly calls '
+        'the missing directory "the file")', () async {
+      final acquired = await acquire(alpine(marker: 'putfile-nodir'));
+      final lease = ContainerLease.of(engine, acquired);
+
+      Object? caught;
+      try {
+        await lease.putFile('/nope/deep/f.txt', utf8.encode('x'));
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught, isA<CopyDestinationNotFound>());
+      // Printed for the record, as the brief asks: this is the only
+      // evidence in the repository of what rig actually says here,
+      // versus Docker's own confusing 404.
+      // ignore: avoid_print
+      print(
+        'CopyDestinationNotFound message:\n'
+        '${(caught as CopyDestinationNotFound).message}',
+      );
+
+      expect(caught.message, contains('/nope/deep'));
+      expect(
+        caught.message,
+        contains('mkdir'),
+        reason:
+            'rig tells the caller how to create the directory itself, '
+            'rather than doing it automatically',
+      );
+    }, timeout: const Timeout(Duration(minutes: 3)));
+
+    test('copyInto copies a host directory in, and every file inside it is '
+        'readable from the container', () async {
+      final acquired = await acquire(alpine(marker: 'copyinto'));
+      final lease = ContainerLease.of(engine, acquired);
+
+      final hostDir = Directory(p.join(tmp.path, 'copy_in'))..createSync();
+      File(p.join(hostDir.path, 'top.txt')).writeAsStringSync('top-level file');
+      Directory(p.join(hostDir.path, 'sub')).createSync();
+      File(p.join(hostDir.path, 'sub', 'nested.txt'))
+          .writeAsStringSync('nested file');
+
+      // copyInto requires the destination to already exist, same as
+      // putFile — rig will not create it.
+      await lease.exec(['mkdir', '-p', '/tmp/copied']);
+      await lease.copyInto(hostDir.path, '/tmp/copied');
+
+      final top = await lease.exec(['cat', '/tmp/copied/top.txt']);
+      final nested = await lease.exec(['cat', '/tmp/copied/sub/nested.txt']);
+
+      expect(top.output, 'top-level file');
+      expect(nested.output, 'nested file');
     }, timeout: const Timeout(Duration(minutes: 3)));
   });
 

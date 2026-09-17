@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:rig/rig.dart';
@@ -170,4 +171,131 @@ void main() {
       expect(entry.mode, 0x1E8); // 0750
     });
   });
+
+  group('readTarEntries / readSingleFileArchive', () {
+    test(
+      'reads a single-file archive the real tar binary built, not one this '
+      'file wrote itself — a round trip through singleFileArchive and back '
+      'would pass even if this reader shared a writer misunderstanding',
+      () async {
+        writeFile('greeting.txt', 'hello from the real tar binary');
+        final tar = await _realTarOf(tmp, ['greeting.txt']);
+
+        final content = readSingleFileArchive(
+          tar,
+          requestedPath: '/tmp/greeting.txt',
+        );
+
+        expect(utf8.decode(content), 'hello from the real tar binary');
+      },
+    );
+
+    test('rejects a multi-entry archive (from the real tar binary) rather '
+        'than silently returning the first entry', () async {
+      writeFile('a.txt', 'a');
+      writeFile('b.txt', 'b');
+      final tar = await _realTarOf(tmp, ['a.txt', 'b.txt']);
+
+      expect(
+        () => readSingleFileArchive(tar, requestedPath: '/tmp/mystery'),
+        throwsA(
+          isA<UnexpectedArchiveContents>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('/tmp/mystery'),
+              contains('a.txt'),
+              contains('b.txt'),
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('rejects a single directory entry, not just a directory with '
+        'children', () async {
+      Directory(p.join(tmp.path, 'onlydir')).createSync();
+      final tar = await _realTarOf(tmp, ['onlydir']);
+
+      expect(
+        () => readSingleFileArchive(tar, requestedPath: '/tmp/onlydir'),
+        throwsA(isA<UnexpectedArchiveContents>()),
+      );
+    });
+
+    test('round-trips content, name, and — checked through the real tar '
+        'binary\'s own listing, not this reader — uid/gid/mode written by '
+        'singleFileArchive', () async {
+      final tar = singleFileArchive(
+        path: 'owned.txt',
+        content: utf8.encode('payload'),
+        mode: 0x1A4, // 644
+        uid: 1000,
+        gid: 1000,
+      );
+
+      final entries = readTarEntries(tar);
+      expect(entries, hasLength(1));
+      expect(entries.single.name, 'owned.txt');
+      expect(entries.single.isRegularFile, isTrue);
+      expect(utf8.decode(entries.single.content), 'payload');
+
+      final listing = await _listWithRealTar(tar);
+      expect(listing, matches(RegExp(r'\b1000\s+1000\b')));
+      expect(listing.split('\n').first, startsWith('-rw-r--r--'));
+    });
+  });
+
+  group('parseFileMode', () {
+    test('accepts 3 and 4 octal digits', () {
+      expect(parseFileMode('644'), 0x1A4);
+      expect(parseFileMode('0644'), 0x1A4);
+      expect(parseFileMode('4755'), 0x9ED);
+    });
+
+    for (final bad in ['999', 'abc', '64', '12345', '']) {
+      test('rejects "$bad" rather than silently misreading it', () {
+        expect(
+          () => parseFileMode(bad),
+          throwsA(
+            isA<InvalidFileMode>().having(
+              (e) => e.message,
+              'message',
+              contains(bad),
+            ),
+          ),
+        );
+      });
+    }
+  });
+}
+
+/// Builds a tar with the real `tar` binary rather than [buildContextTar] or
+/// [singleFileArchive] — the same reasoning [_listWithRealTar] and
+/// [_extractWithRealTar] already apply to the writer, applied to the
+/// reader: a tar nobody in this codebase wrote is the only thing that can
+/// tell a correct reader apart from one that just agrees with its own
+/// writer's mistakes. `--format ustar` pins the format explicitly, since
+/// this reader only understands ustar's fixed-offset header, not GNU's or
+/// pax's extensions.
+Future<Uint8List> _realTarOf(Directory dir, List<String> relPaths) async {
+  final process = await Process.start('tar', [
+    '--format',
+    'ustar',
+    '-cf',
+    '-',
+    '-C',
+    dir.path,
+    ...relPaths,
+  ]);
+  final bytes = <int>[];
+  final collected = process.stdout.forEach(bytes.addAll);
+  await process.stdin.close();
+  await collected;
+  final code = await process.exitCode;
+  if (code != 0) {
+    final err = await process.stderr.transform(utf8.decoder).join();
+    fail('tar --format ustar -cf - exited $code: $err');
+  }
+  return Uint8List.fromList(bytes);
 }

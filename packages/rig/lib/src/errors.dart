@@ -285,6 +285,69 @@ final class ImageBuildFailed extends RigException {
   String get message => 'Could not build $tag:\n\n$detail';
 }
 
+/// `PUT /containers/{id}/archive` answered 404 because [directory] does not
+/// already exist inside the container.
+///
+/// Docker's own 404 calls the missing directory "the file", which reads as
+/// if the *destination* were a file rig failed to find — backwards from
+/// what actually happened. rig also does not create the directory itself:
+/// doing that quietly would turn a mistyped destination into a file that
+/// lands somewhere the caller never intended, with no error to notice.
+final class CopyDestinationNotFound extends RigException {
+  const CopyDestinationNotFound({
+    required this.containerId,
+    required this.directory,
+  });
+
+  final String containerId;
+  final String directory;
+
+  @override
+  String get message =>
+      'Container $containerId has no directory $directory.\n\n'
+      'Copying a file or directory into a container requires the '
+      'destination to already exist as a directory — Docker will not '
+      'create one. Create it first, e.g.:\n'
+      "  await lease.exec(['mkdir', '-p', '$directory']);";
+}
+
+/// `ContainerLease.putFile` was given a mode string that is not 3 or 4
+/// octal digits.
+final class InvalidFileMode extends RigException {
+  const InvalidFileMode({required this.mode});
+
+  final String mode;
+
+  @override
+  String get message =>
+      "File mode must be 3 or 4 octal digits, like '644' or '4755'; got "
+      "'$mode'.";
+}
+
+/// `ContainerLease.getFile` asked for [requestedPath], but the archive
+/// Docker sent back did not hold exactly one regular file.
+///
+/// Most often this means [requestedPath] names a directory: Docker
+/// archives one as multiple entries rather than the single entry a file
+/// produces.
+final class UnexpectedArchiveContents extends RigException {
+  const UnexpectedArchiveContents({
+    required this.requestedPath,
+    required this.entryNames,
+  });
+
+  final String requestedPath;
+  final List<String> entryNames;
+
+  @override
+  String get message =>
+      'getFile($requestedPath) expected a single regular file, but the '
+      'archive Docker returned contained ${entryNames.length} '
+      'entr${entryNames.length == 1 ? 'y' : 'ies'}: '
+      '${entryNames.join(', ')}.\n\n'
+      'This usually means the path names a directory, not a file.';
+}
+
 /// Another holder kept the lock for the whole timeout.
 final class LockTimeout extends RigException {
   const LockTimeout({required this.lockPath, required this.waited});

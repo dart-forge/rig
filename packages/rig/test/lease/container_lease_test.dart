@@ -1,6 +1,11 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:path/path.dart' as p;
 import 'package:rig/engine.dart';
 import 'package:rig/fake_engine.dart';
 import 'package:rig/rig.dart';
+import 'package:rig/src/engine/tar.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -216,5 +221,135 @@ void main() {
         );
       },
     );
+  });
+
+  group('putFile', () {
+    test('rejects a mode that is not 3-4 octal digits, without touching the '
+        'engine at all', () async {
+      final id = engine.addContainer(labels: const {});
+      final lease = ContainerLease.of(engine, acquired(id: id));
+
+      await expectLater(
+        lease.putFile('/data/f.txt', utf8.encode('x'), mode: '999'),
+        throwsA(isA<InvalidFileMode>()),
+      );
+      expect(
+        engine.calls,
+        isEmpty,
+        reason:
+            'a bad mode must be caught before any archive is built or '
+            'sent, not discovered by Docker',
+      );
+    });
+
+    test('round-trips content through putArchive/getArchive exactly, byte '
+        'for byte', () async {
+      final id = engine.addContainer(labels: const {});
+      final lease = ContainerLease.of(engine, acquired(id: id));
+
+      // '/' is present on every container by default, so this exercises
+      // the round trip without also depending on addDirectory.
+      await lease.putFile('/f.txt', utf8.encode('exact bytes'));
+      final readBack = await lease.getFile('/f.txt');
+
+      expect(utf8.decode(readBack), 'exact bytes');
+    });
+
+    test('throws CopyDestinationNotFound when the destination directory does '
+        'not exist, rather than creating it', () async {
+      final id = engine.addContainer(labels: const {});
+      final lease = ContainerLease.of(engine, acquired(id: id));
+
+      await expectLater(
+        lease.putFile('/nope/deep/f.txt', utf8.encode('x')),
+        throwsA(
+          isA<CopyDestinationNotFound>()
+              .having((e) => e.directory, 'directory', '/nope/deep')
+              .having((e) => e.message, 'message', contains('/nope/deep')),
+        ),
+      );
+    });
+
+    test('succeeds once the destination directory is made to exist', () async {
+      final id = engine.addContainer(labels: const {});
+      engine.addDirectory(id, '/data');
+      final lease = ContainerLease.of(engine, acquired(id: id));
+
+      await lease.putFile('/data/f.txt', utf8.encode('ok'));
+
+      expect(utf8.decode(await lease.getFile('/data/f.txt')), 'ok');
+    });
+  });
+
+  group('getFile', () {
+    test('throws UnexpectedArchiveContents when the archive holds more '
+        'than one entry, rather than silently returning the first', () async {
+      final id = engine.addContainer(labels: const {});
+      final tmp = Directory.systemTemp.createTempSync('rig_lease_tar_');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      File(p.join(tmp.path, 'a.txt')).writeAsStringSync('a');
+      File(p.join(tmp.path, 'b.txt')).writeAsStringSync('b');
+      engine.addRawArchive(id, '/data', directoryArchive(tmp, uid: 0, gid: 0));
+      final lease = ContainerLease.of(engine, acquired(id: id));
+
+      await expectLater(
+        lease.getFile('/data'),
+        throwsA(
+          isA<UnexpectedArchiveContents>()
+              .having((e) => e.message, 'message', contains('/data'))
+              .having((e) => e.message, 'message', contains('a.txt'))
+              .having((e) => e.message, 'message', contains('b.txt')),
+        ),
+      );
+    });
+  });
+
+  group('copyInto', () {
+    test('copies a single host file in under its own basename', () async {
+      final id = engine.addContainer(labels: const {});
+      engine.addDirectory(id, '/data');
+      final tmp = Directory.systemTemp.createTempSync('rig_lease_copy_');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      File(p.join(tmp.path, 'source.txt')).writeAsStringSync('host content');
+      final lease = ContainerLease.of(engine, acquired(id: id));
+
+      await lease.copyInto(p.join(tmp.path, 'source.txt'), '/data');
+
+      expect(
+        utf8.decode(await lease.getFile('/data/source.txt')),
+        'host content',
+      );
+    });
+
+    test('copies a host directory\'s contents into the destination, not the '
+        'directory itself', () async {
+      final id = engine.addContainer(labels: const {});
+      engine.addDirectory(id, '/data');
+      final tmp = Directory.systemTemp.createTempSync('rig_lease_copydir_');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      File(p.join(tmp.path, 'one.txt')).writeAsStringSync('one');
+      Directory(p.join(tmp.path, 'sub')).createSync();
+      File(p.join(tmp.path, 'sub', 'two.txt')).writeAsStringSync('two');
+      final lease = ContainerLease.of(engine, acquired(id: id));
+
+      await lease.copyInto(tmp.path, '/data');
+
+      expect(utf8.decode(await lease.getFile('/data/one.txt')), 'one');
+      expect(utf8.decode(await lease.getFile('/data/sub/two.txt')), 'two');
+    });
+
+    test('throws CopyDestinationNotFound when the destination directory does '
+        'not exist', () async {
+      final id = engine.addContainer(labels: const {});
+      final tmp = Directory.systemTemp.createTempSync('rig_lease_copy_');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      File(p.join(tmp.path, 'f.txt')).writeAsStringSync('x');
+      final lease = ContainerLease.of(engine, acquired(id: id));
+
+      await expectLater(
+        lease.copyInto(p.join(tmp.path, 'f.txt'), '/nope'),
+        throwsA(isA<CopyDestinationNotFound>()),
+      );
+    });
   });
 }

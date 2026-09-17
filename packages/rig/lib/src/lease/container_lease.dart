@@ -1,6 +1,10 @@
+import 'dart:typed_data';
+
 import 'package:meta/meta.dart';
+import 'package:path/path.dart' as p;
 
 import '../engine/docker_engine.dart';
+import '../engine/tar.dart';
 import '../errors.dart';
 import '../spec/container_spec.dart';
 import 'acquire.dart';
@@ -98,6 +102,96 @@ final class ContainerLease {
       );
     }
     return result;
+  }
+
+  /// Write [bytes] into the container at [containerPath], once it is
+  /// already running.
+  ///
+  /// [mode] is POSIX permission bits as a 3- or 4-digit octal string, e.g.
+  /// `'644'` or `'4755'` — Dart has no octal literal, and writing the same
+  /// value as `0x1A4` is not something a reader would recognize as a
+  /// permission bit pattern. Throws [InvalidFileMode] for anything that
+  /// is not 3-4 octal digits.
+  ///
+  /// [uid] and [gid] are written into the tar header the file is delivered
+  /// through, which is the reason this method exists rather than telling
+  /// callers to use a bind mount: a mount shows the *host's* ownership
+  /// inside the container, so a file meant for a non-root process can come
+  /// through unreadable. This library hit exactly that wall once — a TLS
+  /// key bind-mounted at 600 showed up owned by root inside the container,
+  /// unreadable to the non-root Postgres that needed it — and works around
+  /// it today by copying the key in as root and fixing ownership from
+  /// inside the container afterwards. Setting [uid]/[gid] here does the
+  /// same fix without the extra round trip: the file can land already
+  /// owned by whoever is meant to read it.
+  ///
+  /// The destination directory (`containerPath`'s parent) must already
+  /// exist inside the container — this throws [CopyDestinationNotFound]
+  /// otherwise, rather than creating it. Creating it quietly would turn a
+  /// mistyped path into a file landing somewhere the caller never intended,
+  /// with nothing to notice. `exec(['mkdir', '-p', ...])` creates it
+  /// explicitly.
+  ///
+  /// This takes effect after the container is already running, so it plays
+  /// no part in the spec hash rig uses to decide whether a shared container
+  /// can be reused: a file placed this way is invisible to that check,
+  /// which means every other suite sharing this container sees the write
+  /// too. Give the spec `lifetime: Lifetime.dedicated` when a test needs to
+  /// write into a container nobody else can see.
+  Future<void> putFile(
+    String containerPath,
+    List<int> bytes, {
+    String mode = '644',
+    int uid = 0,
+    int gid = 0,
+  }) async {
+    final parsedMode = parseFileMode(mode);
+    final directory = p.posix.dirname(containerPath);
+    final name = p.posix.basename(containerPath);
+    await _engineOf().putArchive(
+      containerId,
+      directory,
+      singleFileArchive(
+        path: name,
+        content: bytes,
+        mode: parsedMode,
+        uid: uid,
+        gid: gid,
+      ),
+    );
+  }
+
+  /// Read the file at [containerPath] out of the container.
+  ///
+  /// Throws [UnexpectedArchiveContents] when [containerPath] does not name
+  /// a single regular file — most often because it names a directory,
+  /// which Docker archives as multiple entries rather than the one entry a
+  /// file produces. This does not silently return the first entry: that
+  /// would hide the mismatch rather than fail on it.
+  Future<Uint8List> getFile(String containerPath) async {
+    final tar = await _engineOf().getArchive(containerId, containerPath);
+    return readSingleFileArchive(tar, requestedPath: containerPath);
+  }
+
+  /// Copy a file or directory from the host into [containerDirectory].
+  ///
+  /// [uid]/[gid] carry the same rationale as [putFile]'s: they land in the
+  /// tar header so the copied files can already be owned by whoever inside
+  /// the container is meant to read them, which a bind mount cannot offer.
+  /// [containerDirectory] must already exist inside the container, for the
+  /// same reason and with the same [CopyDestinationNotFound] on failure as
+  /// [putFile].
+  Future<void> copyInto(
+    String hostPath,
+    String containerDirectory, {
+    int uid = 0,
+    int gid = 0,
+  }) async {
+    await _engineOf().putArchive(
+      containerId,
+      containerDirectory,
+      hostPathArchive(hostPath, uid: uid, gid: gid),
+    );
   }
 
   /// Let go of the container.

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:rig/engine.dart';
@@ -458,6 +459,14 @@ final class _PullProbingEngine implements DockerEngine {
 
   @override
   Future<void> removeContainer(String id) => _inner.removeContainer(id);
+
+  @override
+  Future<void> putArchive(String id, String path, List<int> tarBytes) =>
+      _inner.putArchive(id, path, tarBytes);
+
+  @override
+  Future<Uint8List> getArchive(String id, String path) =>
+      _inner.getArchive(id, path);
 
   @override
   Future<void> removeImage(String tag) => _inner.removeImage(tag);

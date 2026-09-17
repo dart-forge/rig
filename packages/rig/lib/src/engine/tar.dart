@@ -103,10 +103,90 @@ void _checkPathLength(String relativePath) {
 /// build context legitimately needs, and everything [listBuildContext]
 /// allows through. File modes are carried over from the filesystem so that
 /// an executable script an image `RUN`s stays executable.
-Uint8List buildContextTar(Directory contextDir) {
+Uint8List buildContextTar(Directory contextDir) =>
+    _archiveFromEntries(listBuildContext(contextDir), uid: 0, gid: 0);
+
+/// Writes [hostDir]'s contents — not the directory itself — as a ustar
+/// archive, for `PUT /containers/{id}/archive` (`ContainerLease.copyInto`).
+///
+/// Reuses [listBuildContext]'s validation (no `.dockerignore`, no symlink):
+/// a copy-in has the same reasons to reject those that a build context
+/// does. [uid]/[gid] are written into every entry's header, which is the
+/// whole point of `copyInto` taking them — see [ContainerLease.putFile]'s
+/// doc comment for why that matters.
+Uint8List directoryArchive(
+  Directory hostDir, {
+  required int uid,
+  required int gid,
+}) => _archiveFromEntries(listBuildContext(hostDir), uid: uid, gid: gid);
+
+/// Writes [content] as a single-entry ustar archive, for `PUT
+/// /containers/{id}/archive` when the caller has bytes in hand rather than
+/// a file already on disk — `ContainerLease.putFile`'s case. [path] is the
+/// entry's name inside the archive (typically just a basename: the
+/// destination directory is named by the PUT request's own `path` query
+/// parameter, not by anything in the archive).
+Uint8List singleFileArchive({
+  required String path,
+  required List<int> content,
+  required int mode,
+  required int uid,
+  required int gid,
+}) {
+  final split = _splitUstarPath(path);
+  final out = BytesBuilder(copy: false);
+  out.add(
+    _header(
+      name: split.name,
+      prefix: split.prefix,
+      mode: mode,
+      size: content.length,
+      typeflag: '0',
+      uid: uid,
+      gid: gid,
+    ),
+  );
+  out.add(Uint8List.fromList(content));
+  final padding = _paddingFor(content.length);
+  if (padding > 0) out.add(Uint8List(padding));
+  out.add(Uint8List(1024));
+  return out.toBytes();
+}
+
+/// Builds the archive for `ContainerLease.copyInto` when the host side is a
+/// single file rather than a directory: [directoryArchive] only handles the
+/// directory case, so `copyInto` picks between the two based on what
+/// [hostPath] actually is.
+Uint8List hostPathArchive(
+  String hostPath, {
+  required int uid,
+  required int gid,
+}) {
+  final type = FileSystemEntity.typeSync(hostPath);
+  if (type == FileSystemEntityType.directory) {
+    return directoryArchive(Directory(hostPath), uid: uid, gid: gid);
+  }
+  if (type == FileSystemEntityType.file) {
+    final file = File(hostPath);
+    return singleFileArchive(
+      path: p.basename(hostPath),
+      content: file.readAsBytesSync(),
+      mode: file.statSync().mode & 0xFFF,
+      uid: uid,
+      gid: gid,
+    );
+  }
+  throw ArgumentError('hostPath is neither a file nor a directory: $hostPath');
+}
+
+Uint8List _archiveFromEntries(
+  List<ContextEntry> entries, {
+  required int uid,
+  required int gid,
+}) {
   final out = BytesBuilder(copy: false);
 
-  for (final entry in listBuildContext(contextDir)) {
+  for (final entry in entries) {
     final split = _splitUstarPath(entry.relativePath);
     final size = entry.isDirectory ? 0 : entry.source!.lengthSync();
 
@@ -117,6 +197,8 @@ Uint8List buildContextTar(Directory contextDir) {
         mode: entry.mode,
         size: size,
         typeflag: entry.isDirectory ? '5' : '0',
+        uid: uid,
+        gid: gid,
       ),
     );
 
@@ -132,6 +214,20 @@ Uint8List buildContextTar(Directory contextDir) {
   // them the daemon treats the stream as a truncated, broken tar.
   out.add(Uint8List(1024));
   return out.toBytes();
+}
+
+/// Rig's own mode strings, as taken by `ContainerLease.putFile`: 3 or 4
+/// octal digits, e.g. `'644'` or `'4755'`. Dart has no octal literal, and
+/// spelling the same value as `0x1A4` is not something anyone would
+/// recognize as a permission bit pattern; a string read as octal is the
+/// readable middle ground. Anything that is not 3-4 octal digits — `'999'`,
+/// `'abc'`, an empty string — throws [InvalidFileMode] rather than being
+/// coerced into whatever `int.parse` would make of it.
+int parseFileMode(String mode) {
+  if (!RegExp(r'^[0-7]{3,4}$').hasMatch(mode)) {
+    throw InvalidFileMode(mode: mode);
+  }
+  return int.parse(mode, radix: 8);
 }
 
 int _paddingFor(int contentLength) {
@@ -181,13 +277,15 @@ Uint8List _header({
   required int mode,
   required int size,
   required String typeflag,
+  required int uid,
+  required int gid,
 }) {
   final buf = Uint8List(_headerSize);
 
   _writeAscii(buf, 0, 100, name);
   _writeOctal(buf, 100, 8, mode);
-  _writeOctal(buf, 108, 8, 0); // uid
-  _writeOctal(buf, 116, 8, 0); // gid
+  _writeOctal(buf, 108, 8, uid);
+  _writeOctal(buf, 116, 8, gid);
   _writeOctal(buf, 124, 12, size);
   _writeOctal(buf, 136, 12, 0); // mtime: content is what rig hashes, not time
   // chksum (148, 8 bytes) is filled with spaces while the sum is computed.
@@ -255,4 +353,119 @@ void _writeChecksum(Uint8List buf, int sum) {
   }
   buf[148 + 6] = 0;
   buf[148 + 7] = 0x20;
+}
+
+// ---- ustar reader ----
+//
+// Written for `ContainerLease.getFile`, which needs to read what `GET
+// /containers/{id}/archive` sends back. Understands exactly what the
+// writers above produce: a `name`/`prefix` pair, an octal `size`, a
+// `typeflag`, and content padded to the next 512-byte boundary. That is
+// also what Docker's own daemon writes for a plain file or directory, which
+// is the whole point — see the integration test that feeds this a tar the
+// real daemon produced, not just one this file wrote itself.
+
+/// One entry read back out of a ustar archive.
+final class TarEntry {
+  const TarEntry({
+    required this.name,
+    required this.typeflag,
+    required this.content,
+  });
+
+  /// `prefix/name` joined back together, exactly as [buildContextTar] and
+  /// friends split it going the other way.
+  final String name;
+
+  /// `'0'` (or the historical NUL byte some writers use) for a regular
+  /// file, `'5'` for a directory.
+  final String typeflag;
+
+  final Uint8List content;
+
+  bool get isDirectory => typeflag == '5';
+
+  bool get isRegularFile => typeflag == '0' || typeflag == '\x00';
+}
+
+/// Reads every entry out of a ustar archive.
+///
+/// Stops at the first zero-filled header, which is how [buildContextTar]
+/// and friends (and Docker itself) mark the end of the archive — including
+/// a truncated one that runs out of bytes before finding it.
+List<TarEntry> readTarEntries(Uint8List tar) {
+  final entries = <TarEntry>[];
+  var offset = 0;
+
+  while (offset + _headerSize <= tar.length && !_isZeroBlock(tar, offset)) {
+    final header = tar.sublist(offset, offset + _headerSize);
+    offset += _headerSize;
+
+    final name = _readAscii(header, 0, 100);
+    final prefix = _readAscii(header, 345, 155);
+    final size = _readOctal(header, 124, 12);
+    final typeflag = String.fromCharCode(header[156]);
+
+    if (offset + size > tar.length) {
+      throw ArgumentError(
+        'truncated tar: entry "$name" claims $size bytes past offset '
+        '$offset, but the archive is only ${tar.length} bytes',
+      );
+    }
+    final content = Uint8List.fromList(tar.sublist(offset, offset + size));
+    offset += size + _paddingFor(size);
+
+    entries.add(
+      TarEntry(
+        name: prefix.isEmpty ? name : '$prefix/$name',
+        typeflag: typeflag,
+        content: content,
+      ),
+    );
+  }
+
+  return entries;
+}
+
+/// Reads an archive expected to hold exactly one regular file — what
+/// `GET /containers/{id}/archive?path=<file>` sends back for a file path.
+///
+/// Throws [UnexpectedArchiveContents] for anything else. Most commonly that
+/// is a directory: Docker archives one as multiple entries (itself plus
+/// whatever it contains) rather than the single entry a file produces, and
+/// silently returning the first entry would hide that [requestedPath]
+/// named something other than the single file the caller asked for.
+Uint8List readSingleFileArchive(
+  Uint8List tar, {
+  required String requestedPath,
+}) {
+  final entries = readTarEntries(tar);
+  if (entries.length == 1 && entries.single.isRegularFile) {
+    return entries.single.content;
+  }
+  throw UnexpectedArchiveContents(
+    requestedPath: requestedPath,
+    entryNames: [for (final e in entries) e.name],
+  );
+}
+
+bool _isZeroBlock(Uint8List tar, int offset) {
+  for (var i = offset; i < offset + _headerSize; i++) {
+    if (tar[i] != 0) return false;
+  }
+  return true;
+}
+
+String _readAscii(Uint8List buf, int offset, int length) {
+  var end = offset;
+  final limit = offset + length;
+  while (end < limit && buf[end] != 0) {
+    end++;
+  }
+  return ascii.decode(buf.sublist(offset, end));
+}
+
+int _readOctal(Uint8List buf, int offset, int length) {
+  final text = _readAscii(buf, offset, length).trim();
+  return text.isEmpty ? 0 : int.parse(text, radix: 8);
 }
