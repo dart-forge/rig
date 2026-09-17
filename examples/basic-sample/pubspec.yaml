@@ -11,4 +11,5 @@ dev_dependencies:
   lints: ^5.0.0
   rig: any
   rig_postgres: any
+  rig_redis: any
   test: ^1.25.0

@@ -55,6 +55,10 @@ jobs:
         working-directory: packages/rig_postgres
         run: dart test
 
+      - name: Test rig_redis
+        working-directory: packages/rig_redis
+        run: dart test
+
       # The examples are a workspace package whose content is tests, so they
       # run like any other package. They run here so that an example cannot
       # quietly stop compiling as the API moves.

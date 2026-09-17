@@ -43,6 +43,7 @@ cleanup and lifetimes.
 | --- | --- |
 | [packages/rig](packages/rig) | The library. `useContainer`, the wait strategies, the lease. |
 | [packages/rig_postgres](packages/rig_postgres) | Postgres with the authentication method genuinely in force, and a database per suite. |
+| [packages/rig_redis](packages/rig_redis) | Redis with a password that is genuinely enforced. |
 | [packages/rig_cli](packages/rig_cli) | The `rig` command — `ls` and `prune`, because containers are left running on purpose. |
 | [examples/basic-sample](examples/basic-sample) | The smallest thing that shows what rig does. Two test files, run by CI. |
 
@@ -57,10 +58,10 @@ cd packages/rig && dart test --exclude-tags integration   # 256, no Docker neede
 cd packages/rig && dart test --tags integration           # 14, needs a daemon
 ```
 
-The same applies to `packages/rig_cli`, `packages/rig_postgres` and
-`examples/basic-sample`. Integration suites here are **not** skipped by
-default; they carry a timeout multiplier instead, so a plain `dart test` runs
-everything the package has and needs Docker.
+The same applies to `packages/rig_cli`, `packages/rig_postgres`,
+`packages/rig_redis` and `examples/basic-sample`. Integration suites here are
+**not** skipped by default; they carry a timeout multiplier instead, so a
+plain `dart test` runs everything the package has and needs Docker.
 
 Continuous integration runs analyze, format, and every package on
 `ubuntu-latest`. GitHub's macOS runners ship no Docker, so macOS socket

@@ -46,3 +46,11 @@ Both examples only open a socket rather than speaking the protocol, because rig
 depends on no database client by design: implementing md5, SCRAM and TLS on the
 client side is exactly what its own tests exist to verify, so a client
 dependency would mean testing rig against itself. Hand `pg.url` to your driver.
+
+## `test/redis_password_test.dart` — what the Redis module adds
+
+`useRedis` gives you a Redis whose **password is genuinely enforced**: pass
+`password:` and the container is started with `--requirepass`, and rig's own
+integration suite proves a wrong password is refused rather than silently
+accepted. Connect with `redis.url`, which carries the password already
+percent-encoded.
