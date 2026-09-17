@@ -16,7 +16,7 @@ void main() {
     expect(dir.root.path, '/Users/x/.rig');
   });
 
-  test('lays out locks, failed markers and certs', () {
+  test('lays out locks, failed markers, certs and suite markers', () {
     final dir = StateDir(Directory(tmp.path));
 
     expect(dir.lockPath('abc123'), p.join(tmp.path, 'locks', 'abc123.lock'));
@@ -26,6 +26,7 @@ void main() {
     );
     expect(dir.failedDir.path, p.join(tmp.path, 'failed'));
     expect(dir.certsDir.path, p.join(tmp.path, 'certs'));
+    expect(dir.suitesDir.path, p.join(tmp.path, 'suites'));
   });
 
   test('ensure creates the tree and is safe to call twice', () {

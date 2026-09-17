@@ -33,6 +33,14 @@ final class StateDir {
   /// mounts a certificate keeps the same hash between runs.
   Directory get certsDir => Directory(p.join(root.path, 'certs'));
 
+  /// Where a running suite's per-database markers live, one subdirectory per
+  /// container id. A module (rig_postgres is the first) writes into this to
+  /// say "this database is still mine" across isolates; `rig prune` removes
+  /// a subdirectory once its container is no longer known to the daemon,
+  /// since removing a container takes whatever that marker was protecting
+  /// with it.
+  Directory get suitesDir => Directory(p.join(root.path, 'suites'));
+
   void ensure() {
     Directory(p.join(root.path, 'locks')).createSync(recursive: true);
     failedDir.createSync(recursive: true);
