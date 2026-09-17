@@ -159,6 +159,28 @@ void main() {
   // `docker build` itself gave for the same `.dockerignore` line, measured
   // rather than assumed.
   group('listBuildContext interprets .dockerignore', () {
+    test(
+      'a copy-in does not honor .dockerignore, because that file describes a '
+      'build context and silently dropping files from a copy would surprise '
+      'the caller for an unrelated reason',
+      () {
+        writeFile('.dockerignore', 'secret.txt\n');
+        writeFile('secret.txt', 'still copied');
+
+        // Through directoryArchive, the call copyInto actually makes, so a
+        // wrong argument at that one call site fails here. Asking
+        // listBuildContext directly would test the parameter, not the wiring.
+        final copied = readTarEntries(directoryArchive(tmp, uid: 0, gid: 0))
+            .map((e) => e.name);
+
+        expect(
+          listBuildContext(tmp).map((e) => e.relativePath),
+          isNot(contains('secret.txt')),
+        );
+        expect(copied, contains('secret.txt'));
+      },
+    );
+
     test("a single '*' does not cross '/': '*.log' leaves sub/c.log alone", () {
       writeFile('.dockerignore', '*.log\n');
       writeFile('sub/c.log', 'not excluded');

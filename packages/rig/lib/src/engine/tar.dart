@@ -66,9 +66,10 @@ const int _maxUstarPathBytes = 255;
 List<ContextEntry> listBuildContext(
   Directory contextDir, {
   String? dockerfile,
+  bool honorDockerignore = true,
 }) {
   final dockerignoreFile = File(p.join(contextDir.path, '.dockerignore'));
-  final rules = dockerignoreFile.existsSync()
+  final rules = honorDockerignore && dockerignoreFile.existsSync()
       ? parseDockerignore(dockerignoreFile.readAsStringSync())
       : const <DockerignoreRule>[];
   final keptPath = dockerfile == null
@@ -141,9 +142,14 @@ Uint8List buildContextTar(Directory contextDir, {String? dockerfile}) =>
 ///
 /// Reuses [listBuildContext]'s validation (no symlink, no over-long path) —
 /// a copy-in has the same reasons to reject those that a build context
-/// does. No `dockerfile` is passed: this is not a build, so there is
-/// nothing to always keep, but a `.dockerignore` that happens to sit in
-/// [hostDir] is still honored the same way, rather than special-cased away.
+/// does, because those are facts about what ustar can carry.
+///
+/// It does **not** honor a `.dockerignore` sitting in [hostDir]. That file
+/// describes a build context, and this is a file copy into a container that
+/// is already running: dropping files from a directory the caller asked to
+/// copy, for a reason that has nothing to do with copying, would be a silent
+/// surprise. A `.dockerignore` here is copied in like any other file. No
+/// `dockerfile` is passed either — there is no build, so nothing to protect.
 /// [uid]/[gid] are written into every entry's header, which is the whole
 /// point of `copyInto` taking them — see [ContainerLease.putFile]'s doc
 /// comment for why that matters.
@@ -151,7 +157,11 @@ Uint8List directoryArchive(
   Directory hostDir, {
   required int uid,
   required int gid,
-}) => _archiveFromEntries(listBuildContext(hostDir), uid: uid, gid: gid);
+}) => _archiveFromEntries(
+  listBuildContext(hostDir, honorDockerignore: false),
+  uid: uid,
+  gid: gid,
+);
 
 /// Writes [content] as a single-entry ustar archive, for `PUT
 /// /containers/{id}/archive` when the caller has bytes in hand rather than
