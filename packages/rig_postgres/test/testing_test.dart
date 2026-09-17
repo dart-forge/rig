@@ -43,4 +43,30 @@ void main() {
       expect(pg.url, isNotEmpty);
     });
   });
+
+  group('two suites on one container', () {
+    final first = usePostgres(stateDir: StateDir(tmp));
+    final second = usePostgres(stateDir: StateDir(tmp));
+
+    test('each get their own database', () {
+      expect(first.database, isNot(second.database));
+      expect(first.database, startsWith('test_'));
+      expect(second.database, startsWith('test_'));
+    });
+
+    test('and the same container', () {
+      expect(first.container.containerId, second.container.containerId);
+    });
+  });
+
+  group('isolation can be turned off', () {
+    final pg = usePostgres(
+      stateDir: StateDir(tmp),
+      isolation: PgIsolation.none,
+    );
+
+    test('and then the container own database is used', () {
+      expect(pg.database, 'test_db');
+    });
+  });
 }

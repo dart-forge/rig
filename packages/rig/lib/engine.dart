@@ -10,3 +10,5 @@ export 'src/engine/docker_engine.dart';
 export 'src/spec/labels.dart';
 export 'src/lease/acquire.dart';
 export 'src/spec/spec_hash.dart';
+export 'src/lease/lock.dart' show defaultLockStaleAfter, withExclusiveLock;
+export 'src/project.dart';
