@@ -119,6 +119,19 @@ build.
 it, the same way `docker build` itself keeps working when the Dockerfile is
 excluded.
 
+Two things to know if you compare results with `docker build`:
+
+- **rig is more permissive about re-including a file inside an excluded
+  directory.** Given `sub` followed by `!sub/keep.txt`, `docker build` still
+  drops `keep.txt` — it stops walking `sub` and never considers what is
+  inside — while rig applies last-match-wins and sends it. rig errs toward
+  the file you explicitly asked to keep; the direction that would matter,
+  sending something you excluded, cannot happen.
+- **`.dockerignore` applies to builds only.** `ContainerLease.copyInto`
+  ignores one sitting in the directory you are copying, because that file
+  describes a build context and quietly dropping files from a copy would be
+  a surprise for an unrelated reason.
+
 ## Requirements
 
 - Dart SDK 3.13 or newer.
