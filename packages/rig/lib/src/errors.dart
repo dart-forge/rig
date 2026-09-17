@@ -168,6 +168,39 @@ final class ContainerExited extends RigException {
   ].join('\n');
 }
 
+/// A command run inside a container with `ContainerLease.exec` exited
+/// non-zero, and the caller did not opt out with `expectSuccess: false`.
+///
+/// Silently ignoring an exit code is a mistake this library has already
+/// made once: a cleanup step reported that it had dropped something when
+/// the drop had actually failed, because nothing checked the result. Once
+/// that happens, whatever the failed step was protecting is gone along with
+/// the record that it ever ran. Throwing by default means a caller has to
+/// say, in the code, that a failure here is fine.
+final class ExecFailed extends RigException {
+  const ExecFailed({
+    required this.command,
+    required this.exitCode,
+    required this.output,
+  });
+
+  /// The command that was run.
+  final List<String> command;
+
+  final int exitCode;
+
+  /// Combined stdout and stderr, or empty when the command produced none.
+  final String output;
+
+  @override
+  String get message => [
+    'Command exited $exitCode: ${command.join(' ')}',
+    '',
+    'Output:',
+    if (output.isEmpty) '  (no output)' else output,
+  ].join('\n');
+}
+
 /// A port was read that the spec never published.
 final class PortNotPublished extends RigException {
   const PortNotPublished({

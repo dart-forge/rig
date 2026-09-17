@@ -153,6 +153,33 @@ void main() {
     );
   }, timeout: const Timeout(Duration(minutes: 3)));
 
+  group('ContainerLease.exec', () {
+    test('runs a command and returns its output', () async {
+      final acquired = await acquire(alpine(marker: 'exec-ok'));
+      final lease = ContainerLease.of(engine, acquired);
+
+      final result = await lease.exec(['sh', '-c', 'echo hello']);
+
+      expect(result.exitCode, 0);
+      expect(result.output.trim(), 'hello');
+    }, timeout: const Timeout(Duration(minutes: 3)));
+
+    test('a non-zero exit throws ExecFailed with the exit code in the '
+        'message', () async {
+      final acquired = await acquire(alpine(marker: 'exec-fail'));
+      final lease = ContainerLease.of(engine, acquired);
+
+      await expectLater(
+        lease.exec(['sh', '-c', 'exit 3']),
+        throwsA(
+          isA<ExecFailed>()
+              .having((e) => e.exitCode, 'exitCode', 3)
+              .having((e) => e.message, 'message', contains('3')),
+        ),
+      );
+    }, timeout: const Timeout(Duration(minutes: 3)));
+  });
+
   test(
     'waits on a log message from a container that never opens a port',
     () async {

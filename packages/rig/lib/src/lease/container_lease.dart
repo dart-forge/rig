@@ -74,6 +74,32 @@ final class ContainerLease {
   Future<String> logTail({int lines = 50}) =>
       _engineOf().logTail(containerId, lines: lines);
 
+  /// Run [command] inside the container.
+  ///
+  /// Throws [ExecFailed] when the command exits non-zero, unless
+  /// [expectSuccess] is false. That default is the opposite of
+  /// testcontainers, which hands back the result and leaves the check to the
+  /// caller. This library already shipped that version of the mistake once:
+  /// a cleanup step trusted an exit code it never looked at, and reported a
+  /// resource as removed when the removal had actually failed, destroying
+  /// the record that would have caught it. A result that can be ignored will
+  /// be, so opting out has to be spelled out at the call site rather than be
+  /// the default.
+  Future<ExecResult> exec(
+    List<String> command, {
+    bool expectSuccess = true,
+  }) async {
+    final result = await _engineOf().exec(containerId, command);
+    if (expectSuccess && result.exitCode != 0) {
+      throw ExecFailed(
+        command: command,
+        exitCode: result.exitCode,
+        output: result.output,
+      );
+    }
+    return result;
+  }
+
   /// Let go of the container.
   ///
   /// A dedicated container is stopped and removed. A shared one is left

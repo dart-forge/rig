@@ -102,6 +102,29 @@ void main() {
     });
   });
 
+  group('ExecFailed', () {
+    test('names the command, the exit code and the output', () {
+      // The three values deliberately share no digits or words, so a
+      // message missing any one of them cannot pass by accident because
+      // another value happens to contain the same text.
+      final e = ExecFailed(
+        command: const ['sh', '-c', 'do-the-thing'],
+        exitCode: 7,
+        output: 'boom: disk is full',
+      );
+
+      expect(e.message, contains('sh -c do-the-thing'));
+      expect(e.message, contains('7'));
+      expect(e.message, contains('boom: disk is full'));
+    });
+
+    test('says so explicitly when the command produced no output', () {
+      final e = ExecFailed(command: const ['true'], exitCode: 1, output: '');
+
+      expect(e.message, contains('(no output)'));
+    });
+  });
+
   group('LeaseNotBound', () {
     test('points at the cause: used outside a test body', () {
       expect(LeaseNotBound().message, contains('setUpAll'));

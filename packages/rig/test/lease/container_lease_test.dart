@@ -147,4 +147,74 @@ void main() {
     expect(ContainerLease.of(engine, acquired(reused: true)).reused, isTrue);
     expect(ContainerLease.of(engine, acquired(reused: false)).reused, isFalse);
   });
+
+  group('exec', () {
+    test('returns the exit code and output of a successful command', () async {
+      final id = engine.addContainer(labels: const {});
+      engine.onExec = (_) => const ExecResult(exitCode: 0, output: 'ok\n');
+      final lease = ContainerLease.of(engine, acquired(id: id));
+
+      final result = await lease.exec(['echo', 'ok']);
+
+      expect(result.exitCode, 0);
+      expect(result.output, 'ok\n');
+    });
+
+    test('throws ExecFailed on a non-zero exit, with the command, exit code '
+        'and output all present in the message', () async {
+      final id = engine.addContainer(labels: const {});
+      // The command, exit code and output deliberately share no digits or
+      // words: if they did, a message missing one of them could still pass
+      // by coincidentally containing another.
+      engine.onExec = (_) =>
+          const ExecResult(exitCode: 7, output: 'boom: disk is full');
+      final lease = ContainerLease.of(engine, acquired(id: id));
+
+      await expectLater(
+        lease.exec(['sh', '-c', 'do-the-thing']),
+        throwsA(
+          isA<ExecFailed>()
+              .having((e) => e.command, 'command', ['sh', '-c', 'do-the-thing'])
+              .having((e) => e.exitCode, 'exitCode', 7)
+              .having(
+                (e) => e.message,
+                'message',
+                allOf(
+                  contains('sh -c do-the-thing'),
+                  contains('7'),
+                  contains('boom: disk is full'),
+                ),
+              ),
+        ),
+      );
+    });
+
+    test('does not throw when expectSuccess is false, and still returns the '
+        'result', () async {
+      final id = engine.addContainer(labels: const {});
+      engine.onExec = (_) => const ExecResult(exitCode: 3, output: 'boom');
+      final lease = ContainerLease.of(engine, acquired(id: id));
+
+      final result = await lease.exec([
+        'sh',
+        '-c',
+        'exit 3',
+      ], expectSuccess: false);
+
+      expect(result.exitCode, 3);
+      expect(result.output, 'boom');
+    });
+
+    test(
+      'throws LeaseNotBound when called before the container is acquired',
+      () async {
+        final lease = ContainerLease.pending(() => engine);
+
+        await expectLater(
+          lease.exec(['echo', 'hi']),
+          throwsA(isA<LeaseNotBound>()),
+        );
+      },
+    );
+  });
 }

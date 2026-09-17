@@ -1,6 +1,7 @@
 /// Your tests start the containers they need.
 library;
 
+export 'src/engine/docker_engine.dart' show ExecResult;
 export 'src/errors.dart';
 export 'src/spec/container_spec.dart' hide NormalizedSpec, normalizeSpec;
 export 'src/wait/wait_for.dart';
