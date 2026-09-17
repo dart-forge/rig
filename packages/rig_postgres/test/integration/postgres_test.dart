@@ -91,9 +91,13 @@ void main() {
   }
 
   group('md5 with TLS', () {
+    // verboseLogs on top of tls is the combination that broke: the shell
+    // wrapper joined every flag with spaces, and log_line_prefix contains
+    // spaces of its own, so the container exited before it ever got here.
     final pg = usePostgres(
       auth: PgAuth.md5,
       tls: const PgTls.selfSigned(),
+      verboseLogs: true,
       isolation: PgIsolation.none,
       lifetime: Lifetime.dedicated,
       labels: {_ownLabel: runId},
@@ -120,7 +124,20 @@ void main() {
       expect(required.output.trim(), 'tls ok');
 
       expect(await storedVerifier(pg.container.containerId), 'md5');
-    }, timeout: const Timeout(Duration(minutes: 5)));
+    });
+
+    test('verbose logging also survived the wrapper', () async {
+      final statement = await engine.exec(pg.container.containerId, [
+        'psql',
+        '-U',
+        'test',
+        '-d',
+        'test_db',
+        '-tAc',
+        'SHOW log_statement',
+      ]);
+      expect(statement.output.trim(), 'all', reason: statement.output);
+    });
   });
 
   group('two suites sharing one container', () {

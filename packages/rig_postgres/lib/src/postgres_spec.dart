@@ -67,22 +67,38 @@ ContainerSpec postgresSpec({
   // does not own — nor one that is group or world readable. Copying it inside,
   // as root, before the entrypoint drops privileges, is what satisfies both
   // Docker's mount semantics and Postgres's permission check.
+  //
+  // The server flags are passed as positional arguments rather than joined
+  // into the script string: a flag such as log_line_prefix contains spaces,
+  // and `sh -c` would split it on them. `"$@"` carries them through as the
+  // separate words they are.
   final script = [
     'install -o postgres -g postgres -m 644 $mountedCert $usedCert',
     'install -o postgres -g postgres -m 600 $mountedKey $usedKey',
-    [
-      'exec docker-entrypoint.sh postgres',
-      ...flags,
-      '-c ssl=on',
-      '-c ssl_cert_file=$usedCert',
-      '-c ssl_key_file=$usedKey',
-    ].join(' '),
+    r'exec docker-entrypoint.sh "$@"',
   ].join(' && ');
 
   return ContainerSpec(
     image: 'postgres:$version',
     env: env,
-    command: ['sh', '-c', script],
+    // After `-c script`, the next word is `$0` (consumed by the shell, not
+    // part of "$@") and every word after that becomes "$@" — so `postgres`
+    // has to come right after this placeholder `sh` for the entrypoint to
+    // see it as its own first argument.
+    command: [
+      'sh',
+      '-c',
+      script,
+      'sh',
+      'postgres',
+      ...flags,
+      '-c',
+      'ssl=on',
+      '-c',
+      'ssl_cert_file=$usedCert',
+      '-c',
+      'ssl_key_file=$usedKey',
+    ],
     mounts: [
       Mount(hostPath: tlsMaterial.certificate.path, containerPath: mountedCert),
       Mount(hostPath: tlsMaterial.privateKey.path, containerPath: mountedKey),

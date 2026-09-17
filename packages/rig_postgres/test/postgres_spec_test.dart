@@ -127,19 +127,62 @@ void main() {
       // A bind mount arrives owned by root, and the server refuses to read a
       // key it does not own. Copying inside is what satisfies both Docker's
       // mount semantics and Postgres's permission check.
-      final command = postgresSpec(tlsMaterial: material).command.join(' ');
+      final command = postgresSpec(tlsMaterial: material).command;
 
-      expect(command, contains('install -o postgres -g postgres -m 600'));
-      expect(command, contains('/rig/server.key'));
-      expect(command, contains('exec docker-entrypoint.sh postgres'));
+      expect(
+        command.join(' '),
+        contains('install -o postgres -g postgres -m 600'),
+      );
+      expect(command.join(' '), contains('/rig/server.key'));
+      expect(command.join(' '), contains(r'exec docker-entrypoint.sh "$@"'));
     });
 
     test('turns ssl on and points the server at the copies', () {
-      final command = postgresSpec(tlsMaterial: material).command.join(' ');
+      final command = postgresSpec(tlsMaterial: material).command;
 
-      expect(command, contains('-c ssl=on'));
-      expect(command, contains('ssl_cert_file=/var/lib/postgresql/server.crt'));
-      expect(command, contains('ssl_key_file=/var/lib/postgresql/server.key'));
+      expect(command, containsAllInOrder(['-c', 'ssl=on']));
+      expect(
+        command,
+        containsAllInOrder([
+          '-c',
+          'ssl_cert_file=/var/lib/postgresql/server.crt',
+        ]),
+      );
+      expect(
+        command,
+        containsAllInOrder([
+          '-c',
+          'ssl_key_file=/var/lib/postgresql/server.key',
+        ]),
+      );
+    });
+
+    test('passes flags as separate words, not a space-joined string', () {
+      // log_line_prefix contains spaces. Joined into the `sh -c` string, they
+      // would be split on word boundaries and the server would exit with
+      // "invalid argument". As positional arguments after `"$@"`, each flag
+      // and its value survive as one word each.
+      final command = postgresSpec(
+        tlsMaterial: material,
+        verboseLogs: true,
+      ).command;
+
+      expect(
+        command,
+        contains('log_line_prefix=%t [%p]: user=%u,db=%d,client=%h '),
+      );
+    });
+
+    test(r'postgres leads the positional arguments after $0', () {
+      // After `sh -c script`, the next word is consumed as $0 and everything
+      // after that becomes "$@" inside the script. `postgres` has to be the
+      // first word of "$@" for the entrypoint to treat it as its own argv[0].
+      final command = postgresSpec(tlsMaterial: material).command;
+
+      final scriptIndex = command.indexOf('-c') + 1;
+      // command[scriptIndex + 1] is $0 (a placeholder, discarded by the
+      // shell); command[scriptIndex + 2] is the first element of "$@".
+      expect(command[scriptIndex + 2], 'postgres');
     });
 
     test('keeps the other server flags', () {
@@ -147,15 +190,10 @@ void main() {
         tlsMaterial: material,
         verboseLogs: true,
         maxConnections: 20,
-      ).command.join(' ');
+      ).command;
 
       expect(command, contains('log_statement=all'));
       expect(command, contains('max_connections=20'));
-      expect(
-        command.indexOf('exec docker-entrypoint.sh'),
-        lessThan(command.indexOf('log_statement=all')),
-        reason: 'the flags belong to the server, not to the shell wrapper',
-      );
     });
 
     test('the material is part of what makes the container distinct', () {
