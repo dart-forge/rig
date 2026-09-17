@@ -50,6 +50,39 @@ void main() {
       expect(name, matches(RegExp(r'^[a-z][a-z0-9_]*$')));
     });
 
+    test('every name it generates is one it can recognise', () {
+      // A generator that can emit a name its own parser rejects leaves
+      // databases nobody ever cleans up, in a container that is never
+      // removed. The empty and symbol-only cases are reachable:
+      // currentProjectName returns an empty string when it finds no pubspec.
+      const projects = [
+        'aim_postgres',
+        '',
+        '___',
+        '123',
+        'a',
+        'Wildly-Long.Project Name/With Junk Wildly-Long.Project Name/With Junk',
+      ];
+
+      for (final project in projects) {
+        final name = suiteDatabaseName(
+          project: project,
+          now: now,
+          token: 'a1b2c3d4',
+        );
+
+        expect(
+          createdAtOf(name),
+          isNotNull,
+          reason:
+              'generated "$name" from "$project" and could not parse '
+              'it back',
+        );
+        expect(name.length, lessThanOrEqualTo(63));
+        expect(name, matches(RegExp(r'^[a-z][a-z0-9_]*$')));
+      }
+    });
+
     test('two calls a moment apart do not collide', () {
       final a = suiteDatabaseName(project: 'p', now: now, token: 'aaaaaaaa');
       final b = suiteDatabaseName(project: 'p', now: now, token: 'bbbbbbbb');
@@ -142,16 +175,21 @@ void main() {
 
   group('dropStaleSuiteDatabases', () {
     test('drops only what is old and unused', () async {
+      // Real wall-clock time, not the fixed `now` used elsewhere in this
+      // file: dropStaleSuiteDatabases also refuses to touch anything this
+      // process could have created, judged against the real clock, so `old`
+      // has to be genuinely in the past for that guard to let it through.
+      final reference = DateTime.now();
       // Tokens are hex because that is what newSuiteToken produces, and the
       // parser only accepts names this module could have written.
       final old = suiteDatabaseName(
         project: 'p',
-        now: now.subtract(const Duration(hours: 3)),
+        now: reference.subtract(const Duration(hours: 3)),
         token: 'deadbeef',
       );
       final fresh = suiteDatabaseName(
         project: 'p',
-        now: now,
+        now: reference,
         token: 'cafebabe',
       );
       engine.onExec = (command) {
@@ -167,7 +205,7 @@ void main() {
         containerId: containerId,
         user: 'test',
         adminDatabase: 'test_db',
-        now: now,
+        now: reference,
       );
 
       expect(dropped, [old]);
@@ -234,6 +272,32 @@ void main() {
       // A suite holding a lease may be between connections, so age alone is
       // not enough to call a database abandoned.
       expect(sqlOf(engine.calls.first), contains('pg_stat_activity'));
+    });
+
+    test('never drops a database this process could have created', () async {
+      // A suite running alongside this one is between connections as often as
+      // not, so no query can distinguish it from an abandoned database. Being
+      // in the same process can.
+      final mine = suiteDatabaseName(
+        project: 'p',
+        now: DateTime.now(),
+        token: 'aaaabbbb',
+      );
+      engine.onExec = (command) => command.last.contains('pg_database')
+          ? ExecResult(exitCode: 0, output: '$mine\n')
+          : const ExecResult(exitCode: 0, output: '');
+
+      final dropped = await dropStaleSuiteDatabases(
+        engine: engine,
+        containerId: containerId,
+        user: 'test',
+        adminDatabase: 'test_db',
+        // Far in the future with a tiny threshold: age alone would condemn it.
+        now: DateTime.now().add(const Duration(days: 1)),
+        staleAfter: const Duration(seconds: 1),
+      );
+
+      expect(dropped, isEmpty);
     });
 
     test('says nothing and does nothing when the query fails', () async {

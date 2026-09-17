@@ -13,6 +13,16 @@ const Duration defaultStaleAfter = Duration(hours: 1);
 
 final Random _tokens = Random();
 
+/// When this process started.
+///
+/// Nothing this process created can be older than this, which is what makes
+/// the sweep structurally unable to touch a database belonging to a suite
+/// running alongside it. Age and idleness alone cannot tell those apart: a
+/// suite between two connections has no row in `pg_stat_activity`, so the
+/// guard meant to protect it is satisfied by the very state it is meant to
+/// catch.
+final DateTime _processStartedAt = DateTime.now().toUtc();
+
 /// The minute [at] falls in, as it appears inside a database name.
 String minuteStampOf(DateTime at) =>
     '${at.toUtc().millisecondsSinceEpoch ~/ 60000}';
@@ -33,13 +43,30 @@ String suiteDatabaseName({
   required DateTime now,
   required String token,
 }) {
-  final slug = project.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_');
+  final slug = _slugOf(project);
   final stamp = minuteStampOf(now);
   // Identifiers cap at 63 characters, and the stamp and token have to survive
   // whatever the project is called.
   final room = 63 - 'test__${stamp}_$token'.length;
   final trimmed = slug.length > room ? slug.substring(0, room) : slug;
-  return 'test_${trimmed}_${stamp}_$token'.replaceAll(RegExp(r'_+'), '_');
+  return 'test_${trimmed}_${stamp}_$token';
+}
+
+/// A project name reduced to something legal inside an identifier.
+///
+/// Never empty, and that is the point rather than tidiness. The name's shape —
+/// four underscore-separated parts — is how the sweep recognises a database it
+/// created. A project that slugged away to nothing would produce a three-part
+/// name that [createdAtOf] rejects, so the sweep would skip it forever, in a
+/// container that is deliberately never removed. `currentProjectName` returns
+/// an empty string when it finds no pubspec, so this is reachable rather than
+/// hypothetical.
+String _slugOf(String project) {
+  final slug = project
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+      .replaceAll(RegExp(r'^_+|_+$'), '');
+  return slug.isEmpty ? 'unnamed' : slug;
 }
 
 /// Creates [database] for one suite inside a container others are sharing.
@@ -122,7 +149,7 @@ Future<List<String>> dropStaleSuiteDatabases({
     final candidate = name.trim();
     if (candidate.isEmpty) continue;
 
-    final createdAt = _createdAtOf(candidate);
+    final createdAt = createdAtOf(candidate);
     if (createdAt == null) continue;
 
     // The stamp is the minute the database was created in, floored, so the
@@ -132,6 +159,11 @@ Future<List<String>> dropStaleSuiteDatabases({
     // not connected to it yet.
     final createdNoLaterThan = createdAt.add(const Duration(minutes: 1));
     if (!createdNoLaterThan.isBefore(cutoff)) continue;
+
+    // Never a database this process could have created. Suites in this run
+    // share the process, so this rules them out by construction instead of
+    // relying on the age margin being generous enough.
+    if (!createdNoLaterThan.isBefore(_processStartedAt)) continue;
 
     await dropSuiteDatabase(
       engine: engine,
@@ -147,7 +179,11 @@ Future<List<String>> dropStaleSuiteDatabases({
 
 /// The minute stamp out of a name this module produced, or null when the name
 /// did not come from here.
-DateTime? _createdAtOf(String database) {
+///
+/// Not private so a test can check the round trip. A generator that can emit a
+/// name its own parser rejects leaves databases nobody ever cleans up, and
+/// that pair is worth pinning directly rather than through the sweep.
+DateTime? createdAtOf(String database) {
   final match = RegExp(r'^test_.*_(\d+)_[0-9a-f]{8}$').firstMatch(database);
   if (match == null) return null;
   final minutes = int.tryParse(match.group(1)!);
