@@ -376,6 +376,22 @@ final class HttpDockerEngine implements DockerEngine {
   }
 
   @override
+  Future<void> removeImage(String tag) async {
+    final res = await _send(
+      'DELETE',
+      '/images/${Uri.encodeComponent(tag)}?${_query({'force': '1'})}',
+    );
+    // 404: already gone, which is what removing it was for.
+    if (res.statusCode == 404 || res.statusCode < 400) return;
+    throw EngineError(
+      method: 'DELETE',
+      path: res.path,
+      statusCode: res.statusCode,
+      body: res.text,
+    );
+  }
+
+  @override
   Future<void> ensureNetwork(String name, Map<String, String> labels) async {
     final res = await _send(
       'POST',

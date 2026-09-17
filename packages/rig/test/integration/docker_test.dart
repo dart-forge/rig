@@ -458,9 +458,12 @@ void main() {
 
     /// Best-effort: it is test hygiene, not the feature under test, so a
     /// failure here must not fail the test that already made its point.
+    ///
+    /// Goes through the engine rather than the Docker CLI, because rig claims
+    /// to need no CLI and its own suite should not quietly depend on one.
     Future<void> removeImageTag(String tag) async {
       try {
-        await Process.run('docker', ['rmi', '-f', tag]);
+        await (await currentEngine()).removeImage(tag);
       } on Object {
         // Nothing to do about it here.
       }

@@ -460,6 +460,9 @@ final class _PullProbingEngine implements DockerEngine {
   Future<void> removeContainer(String id) => _inner.removeContainer(id);
 
   @override
+  Future<void> removeImage(String tag) => _inner.removeImage(tag);
+
+  @override
   Future<void> ensureNetwork(String name, Map<String, String> labels) =>
       _inner.ensureNetwork(name, labels);
 

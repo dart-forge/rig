@@ -282,6 +282,12 @@ final class FakeDockerEngine implements DockerEngine {
   }
 
   @override
+  Future<void> removeImage(String tag) async {
+    calls.add('removeImage:$tag');
+    images.remove(tag);
+  }
+
+  @override
   Future<void> ensureNetwork(String name, Map<String, String> labels) async {
     calls.add('ensureNetwork:$name');
     _networksByName.putIfAbsent(

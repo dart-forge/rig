@@ -175,6 +175,13 @@ abstract interface class DockerEngine {
 
   Future<void> removeContainer(String id);
 
+  /// Remove the image tagged [tag].
+  ///
+  /// rig can build images, so it can remove them: a caller that builds one
+  /// should not have to reach for the Docker CLI to clean it up. Removing a
+  /// tag that is already gone succeeds — that is the state the caller wanted.
+  Future<void> removeImage(String tag);
+
   /// Creates a network named [name] carrying [labels] if none exists yet.
   ///
   /// Idempotent: an existing network with this name is left alone and
