@@ -1,8 +1,9 @@
 /// Everything rig throws.
 ///
-/// Abstract rather than sealed: packages built on top of rig (rig_postgres,
-/// for one) need to add their own exceptions without being able to touch this
-/// library.
+/// Not sealed: a module in another package defines its own failures as rig
+/// failures, so that a consumer catching this catches all of them. Sealing it
+/// would buy exhaustive switching that nothing in this project does, at the
+/// price of every module having to invent a parallel hierarchy.
 abstract class RigException implements Exception {
   const RigException();
 
