@@ -276,6 +276,17 @@ final class HttpDockerEngine implements DockerEngine {
   }
 
   @override
+  Future<String> logs(String id) async {
+    final query = {'stdout': '1', 'stderr': '1', 'tail': 'all'};
+    final res = await _send('GET', '/containers/$id/logs?${_query(query)}');
+    // Same reasoning as logTail: this is read to check a wait condition, not
+    // to demand the container exists, so a failure reads as "no log" rather
+    // than throwing.
+    if (res.statusCode >= 400) return '';
+    return demuxLogFrames(res.bytes);
+  }
+
+  @override
   Future<ExecResult> exec(String id, List<String> command) async {
     final created = await _sendOk(
       'POST',

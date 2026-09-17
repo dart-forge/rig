@@ -271,6 +271,162 @@ void main() {
     });
   });
 
+  group('WaitFor.logMessage', () {
+    test('returns as soon as the log already contains the pattern', () async {
+      final id = engine.addContainer(labels: const {}, logs: 'ready\n');
+
+      await expectLater(
+        wait(const WaitFor.logMessage('ready'), targetFor(id)),
+        completes,
+      );
+      expect(clock.slept, Duration.zero, reason: 'no need to poll twice');
+    });
+
+    test('polls until the pattern appears', () async {
+      // The log is unmatched at t=0 (real, not staged to look that way), and
+      // only starts matching once something else has had a chance to write
+      // to it — modelled here as a side effect of the fake sleeper, so the
+      // first `_isSatisfied` check is genuinely unsatisfied rather than
+      // incidentally satisfied on the first poll. See the module-level note
+      // on why that distinction matters for this test file.
+      final id = engine.addContainer(labels: const {}, logs: 'starting up\n');
+      var sleeps = 0;
+
+      Future<void> sleeper(Duration d) async {
+        sleeps++;
+        await clock.sleep(d);
+        if (sleeps == 1) engine.setLogs(id, 'starting up\nready\n');
+      }
+
+      await expectLater(
+        awaitReady(
+          strategy: const WaitFor.logMessage('ready'),
+          engine: engine,
+          target: targetFor(id),
+          now: clock.now,
+          sleep: sleeper,
+          pollInterval: const Duration(milliseconds: 100),
+        ),
+        completes,
+      );
+      expect(
+        sleeps,
+        1,
+        reason: 'must poll at least once before the pattern shows up',
+      );
+    });
+
+    test(
+      'occurrences counts every match, not just whether one happened',
+      () async {
+        final id = engine.addContainer(
+          labels: const {},
+          logs: 'ready\nready\n',
+        );
+
+        // Satisfied: the line appears twice.
+        await expectLater(
+          wait(
+            const WaitFor.logMessage('ready', occurrences: 2),
+            targetFor(id),
+          ),
+          completes,
+        );
+      },
+    );
+
+    test(
+      'does not stop at the first match when occurrences asks for more',
+      () async {
+        final id = engine.addContainer(
+          labels: const {},
+          logs: 'ready\nready\n',
+        );
+
+        // The line appears exactly twice; asking for 3 must never be
+        // satisfied, so this only completes by timing out.
+        await expectLater(
+          wait(
+            const WaitFor.logMessage(
+              'ready',
+              occurrences: 3,
+              timeout: Duration(milliseconds: 200),
+            ),
+            targetFor(id),
+          ),
+          throwsA(isA<ReadyTimeout>()),
+        );
+      },
+    );
+
+    test('matches a RegExp, not just a literal String', () async {
+      final id = engine.addContainer(
+        labels: const {},
+        logs: 'listening on port 5432\n',
+      );
+
+      await expectLater(
+        wait(
+          WaitFor.logMessage(RegExp(r'listening on port \d+')),
+          targetFor(id),
+        ),
+        completes,
+      );
+    });
+
+    test(
+      'times out with ReadyTimeout naming the pattern it waited for',
+      () async {
+        final id = engine.addContainer(labels: const {}, logs: 'nope\n');
+
+        await expectLater(
+          wait(
+            const WaitFor.logMessage(
+              'ready',
+              timeout: Duration(milliseconds: 200),
+            ),
+            targetFor(id),
+          ),
+          throwsA(
+            isA<ReadyTimeout>().having(
+              (e) => e.waitingFor,
+              'waitingFor',
+              contains('ready'),
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
+      'reports ContainerExited when the container has already stopped',
+      () async {
+        final id = engine.addContainer(
+          labels: const {},
+          state: 'exited',
+          logs: 'exec format error',
+        );
+
+        await expectLater(
+          wait(
+            const WaitFor.logMessage(
+              'ready',
+              timeout: Duration(milliseconds: 50),
+            ),
+            targetFor(id),
+          ),
+          throwsA(
+            isA<ContainerExited>().having(
+              (e) => e.message,
+              'message',
+              contains('exec format error'),
+            ),
+          ),
+        );
+      },
+    );
+  });
+
   group('WaitFor.all', () {
     test('returns only when every part is satisfied', () async {
       final listener = await ServerSocket.bind('127.0.0.1', 0);

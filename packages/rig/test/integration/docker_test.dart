@@ -154,6 +154,32 @@ void main() {
   }, timeout: const Timeout(Duration(minutes: 3)));
 
   test(
+    'waits on a log message from a container that never opens a port',
+    () async {
+      // No exposedPorts, no healthcheck: a port wait or a health wait could
+      // never succeed on this container, so completing here proves the log
+      // wait itself did the work.
+      final spec = ContainerSpec(
+        image: 'alpine:3.20',
+        command: const ['sh', '-c', 'echo ready; sleep 300'],
+        labels: {_ownLabel: runId},
+        waitFor: const WaitFor.logMessage(
+          'ready',
+          timeout: Duration(seconds: 30),
+        ),
+      );
+
+      final acquired = await acquire(spec);
+
+      expect(
+        (await engine.inspectContainer(acquired.containerId)).running,
+        isTrue,
+      );
+    },
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
+
+  test(
     'a container that never becomes healthy fails with its own logs',
     () async {
       final spec = ContainerSpec(

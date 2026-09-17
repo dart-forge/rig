@@ -139,6 +139,12 @@ Future<bool> _isSatisfied(
         path,
         status,
       ),
+    LogMessageWait(:final pattern, :final occurrences) => await _hasLogMessage(
+      engine,
+      target,
+      pattern,
+      occurrences,
+    ),
     // Handled above; listed so the switch stays exhaustive.
     AllWait() => false,
   };
@@ -196,6 +202,19 @@ Future<bool> _answers(String host, int? port, String path, int status) async {
   } finally {
     client.close(force: true);
   }
+}
+
+Future<bool> _hasLogMessage(
+  DockerEngine engine,
+  ReadyTarget target,
+  Pattern pattern,
+  int occurrences,
+) async {
+  // Reads the whole log every poll rather than following the stream: see
+  // LogMessageWait.occurrences for why that is deliberate, not a missed
+  // optimisation.
+  final text = await engine.logs(target.containerId);
+  return pattern.allMatches(text).length >= occurrences;
 }
 
 DateTime _systemNow() => DateTime.now();

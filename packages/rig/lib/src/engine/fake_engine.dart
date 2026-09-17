@@ -192,6 +192,9 @@ final class FakeDockerEngine implements DockerEngine {
       _require(id).logs;
 
   @override
+  Future<String> logs(String id) async => _require(id).logs;
+
+  @override
   Future<ExecResult> exec(String id, List<String> command) async {
     calls.add('exec:$id:${command.join(' ')}');
     _require(id);

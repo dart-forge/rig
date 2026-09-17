@@ -27,6 +27,15 @@ sealed class WaitFor {
   /// Wait for all of [strategies], concurrently.
   const factory WaitFor.all(List<WaitFor> strategies) = AllWait;
 
+  /// Wait until the container's log matches [pattern].
+  ///
+  /// [pattern] is a plain `String` (substring match) or a `RegExp`.
+  const factory WaitFor.logMessage(
+    Pattern pattern, {
+    int occurrences,
+    Duration timeout,
+  }) = LogMessageWait;
+
   /// How long to keep trying before giving up.
   Duration get timeout;
 
@@ -93,3 +102,43 @@ final class AllWait extends WaitFor {
   @override
   String get description => strategies.map((s) => s.description).join(' and ');
 }
+
+final class LogMessageWait extends WaitFor {
+  const LogMessageWait(
+    this.pattern, {
+    this.occurrences = 1,
+    this.timeout = _defaultTimeout,
+  });
+
+  final Pattern pattern;
+
+  /// How many times [pattern] must appear.
+  ///
+  /// Counted over the container's *entire* log, not just what has been
+  /// printed since this wait started: the checker re-reads the log from the
+  /// beginning on every poll instead of following the stream (see the doc
+  /// comment on `_isSatisfied` in `ready.dart` for why). So a container that
+  /// a previous suite already used may satisfy `occurrences: 2` the instant
+  /// this suite starts waiting on it. "has [pattern] appeared at least
+  /// [occurrences] times in this container's life" is always the correct
+  /// reading; "at least [occurrences] times since I started waiting" is not
+  /// what this checks.
+  final int occurrences;
+
+  @override
+  final Duration timeout;
+
+  @override
+  String get description {
+    final label = _patternLabel(pattern);
+    return occurrences == 1
+        ? 'the log to contain "$label"'
+        : 'the log to contain "$label" $occurrences times';
+  }
+}
+
+/// [RegExp.toString] renders as `RegExp: pattern=... flags=...`, which is
+/// unreadable dropped into an error message. This is what the user actually
+/// typed: [Pattern.pattern] for a `RegExp`, the string itself otherwise.
+String _patternLabel(Pattern pattern) =>
+    pattern is RegExp ? pattern.pattern : pattern.toString();

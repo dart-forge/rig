@@ -350,6 +350,9 @@ final class _PullProbingEngine implements DockerEngine {
       _inner.logTail(id, lines: lines);
 
   @override
+  Future<String> logs(String id) => _inner.logs(id);
+
+  @override
   Future<ExecResult> exec(String id, List<String> command) =>
       _inner.exec(id, command);
 

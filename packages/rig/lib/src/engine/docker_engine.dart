@@ -129,6 +129,14 @@ abstract interface class DockerEngine {
   /// The last [lines] lines of the container's combined output.
   Future<String> logTail(String id, {int lines});
 
+  /// The container's entire combined output, from the start.
+  ///
+  /// `WaitFor.logMessage` needs this rather than [logTail]: a suite that
+  /// joins an already-running, shared container has to be able to find a
+  /// message that was printed before it arrived, and a tail could have
+  /// scrolled past it.
+  Future<String> logs(String id);
+
   /// Runs [command] inside the container and waits for it to finish.
   ///
   /// Nothing is written to the command's stdin. That restriction is what lets
