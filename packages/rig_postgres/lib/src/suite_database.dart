@@ -76,6 +76,22 @@ File suiteMarkerFile({
   required String database,
 }) => File(p.join(stateDir.root.path, 'suites', containerId, database));
 
+/// The suite's own database could not be created.
+final class SuiteDatabaseNotCreated extends RigException {
+  const SuiteDatabaseNotCreated({required this.database, required this.detail});
+
+  final String database;
+  final String detail;
+
+  @override
+  String get message =>
+      'Could not create $database for this suite, so the suite would have '
+      'run against the container\'s shared database instead, seeing tables '
+      'other suites created.\n$detail\n\n'
+      'Check that the container is healthy (docker logs) and that the '
+      'admin user has permission to create databases.';
+}
+
 /// Creates [database] for one suite inside a container others are sharing,
 /// and marks it as belonging to a running suite.
 Future<void> createSuiteDatabase({
@@ -96,10 +112,7 @@ Future<void> createSuiteDatabase({
     'CREATE DATABASE $database TEMPLATE template0',
   );
   if (result.exitCode != 0) {
-    throw StateError(
-      'Could not create the database for this suite ($database), so the '
-      'suite would have run against a shared one.\n${result.output}',
-    );
+    throw SuiteDatabaseNotCreated(database: database, detail: result.output);
   }
 
   final marker = suiteMarkerFile(

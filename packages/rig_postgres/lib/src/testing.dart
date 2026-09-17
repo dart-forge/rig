@@ -133,6 +133,23 @@ PostgresLease usePostgres({
   return lease;
 }
 
+/// The stored password could not be re-hashed for the auth mode asked for.
+final class AuthConfirmationFailed extends RigException {
+  const AuthConfirmationFailed({required this.auth, required this.detail});
+
+  final PgAuth auth;
+  final String detail;
+
+  @override
+  String get message =>
+      'Could not set the stored password encryption for ${auth.name}, so '
+      'this container would not actually authenticate with ${auth.name} — '
+      'it would quietly accept whatever the server hashed the password as '
+      'by default.\n$detail\n\n'
+      'Check that the container is healthy (docker logs) and that psql is '
+      'reachable inside it.';
+}
+
 /// Re-hash the stored password so the auth mode is the one that was asked for.
 ///
 /// Safe to run again: the statements are idempotent, and several suites sharing
@@ -171,10 +188,6 @@ Future<void> confirmAuthMode({
   ]);
 
   if (result.exitCode != 0) {
-    throw StateError(
-      'Could not set the stored password encryption to $encryption, so this '
-      'container would not actually authenticate with ${auth.name}.\n'
-      '${result.output}',
-    );
+    throw AuthConfirmationFailed(auth: auth, detail: result.output);
   }
 }

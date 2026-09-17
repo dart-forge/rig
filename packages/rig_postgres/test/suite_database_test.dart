@@ -156,7 +156,7 @@ void main() {
             stateDir: stateDir,
           ),
           throwsA(
-            isA<StateError>().having(
+            isA<SuiteDatabaseNotCreated>().having(
               (e) => e.message,
               'message',
               contains('permission denied'),

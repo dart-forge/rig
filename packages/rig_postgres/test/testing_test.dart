@@ -115,4 +115,31 @@ void main() {
       },
     );
   });
+
+  group('confirmAuthMode reports its own failure as a RigException', () {
+    test('rather than a bare StateError', () async {
+      final fake = FakeDockerEngine();
+      final containerId = fake.addContainer(labels: const {});
+      fake.onExec = (_) =>
+          const ExecResult(exitCode: 1, output: 'ERROR: permission denied');
+
+      await expectLater(
+        confirmAuthMode(
+          engine: fake,
+          containerId: containerId,
+          auth: PgAuth.md5,
+          user: 'test',
+          password: 'test',
+          database: 'test_db',
+        ),
+        throwsA(
+          isA<AuthConfirmationFailed>().having(
+            (e) => e.message,
+            'message',
+            contains('permission denied'),
+          ),
+        ),
+      );
+    });
+  });
 }
