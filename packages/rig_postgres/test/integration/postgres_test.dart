@@ -113,21 +113,28 @@ void main() {
         expect(result.output.trim(), 'ok');
       });
 
-      test('stores the password in the form the mode requires', () async {
-        // A connection succeeding is not evidence: with md5 in pg_hba and a
-        // SCRAM verifier the server authenticates with SCRAM and the test
-        // passes without md5 ever being used.
-        final stored = await storedVerifier(pg.container.containerId);
+      // Cleartext has nothing to assert here: confirmAuthMode re-hashes the
+      // stored password for md5 and scram specifically because pg_hba would
+      // otherwise say one thing and the stored verifier another, but
+      // password compares the client's cleartext value against whatever is
+      // already stored, in whatever form initdb happened to choose — so
+      // there is no re-hashing step whose effect this could check either
+      // way, and an assertion that accepted every form the verifier could
+      // possibly take would not be testing anything.
+      if (auth != PgAuth.password) {
+        test('stores the password in the form the mode requires', () async {
+          // A connection succeeding is not evidence: with md5 in pg_hba and a
+          // SCRAM verifier the server authenticates with SCRAM and the test
+          // passes without md5 ever being used.
+          final stored = await storedVerifier(pg.container.containerId);
 
-        expect(stored, switch (auth) {
-          PgAuth.md5 => 'md5',
-          PgAuth.scram => 'scram',
-          // Cleartext compares against whatever is stored, and there is
-          // nothing else to assert about this mode: it accepts the password
-          // as-is, so there is no re-hashing step to check either way.
-          PgAuth.password => anyOf('scram', 'md5'),
+          expect(stored, switch (auth) {
+            PgAuth.md5 => 'md5',
+            PgAuth.scram => 'scram',
+            PgAuth.password => throw StateError('excluded above'),
+          });
         });
-      });
+      }
 
       test('a real Postgres answers on the mapped host port', () async {
         // pg.host and pg.port are the module's whole product, and every

@@ -28,7 +28,10 @@ final class ContainerLease {
   /// For a module that acquires its own container and wants to hand the caller
   /// something that speaks its own vocabulary. Not annotated internal for that
   /// reason: a module in another package is outside this one, which is exactly
-  /// who this is for.
+  /// who this is for. The other use is a unit test faking a lease without
+  /// going through `useContainer` at all — module tests do this to build a
+  /// [ContainerLease] straight from a fake engine and a literal
+  /// [AcquiredContainer].
   ContainerLease.of(DockerEngine engine, AcquiredContainer acquired)
     : _engineOf = (() => engine),
       _acquired = acquired;
