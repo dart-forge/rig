@@ -17,6 +17,12 @@ void main() {
     });
   });
 
+  group('ContainerNetwork', () {
+    test('prefixes the name it gives Docker', () {
+      expect(const ContainerNetwork('app').dockerName, 'rig-app');
+    });
+  });
+
   group('copyWith', () {
     test('overrides only the given fields', () {
       const base = ContainerSpec(
@@ -247,6 +253,91 @@ void main() {
           isNot(normalizeSpec(other).canonicalLines),
         );
       }
+    });
+
+    test('includes the network name', () {
+      const noNetwork = ContainerSpec(image: 'x', waitFor: WaitFor.healthy());
+      const withNetwork = ContainerSpec(
+        image: 'x',
+        waitFor: WaitFor.healthy(),
+        network: ContainerNetwork('app'),
+      );
+
+      expect(
+        normalizeSpec(noNetwork).canonicalLines,
+        isNot(normalizeSpec(withNetwork).canonicalLines),
+      );
+    });
+
+    test('a different network name changes the hash', () {
+      const app = ContainerSpec(
+        image: 'x',
+        waitFor: WaitFor.healthy(),
+        network: ContainerNetwork('app'),
+      );
+      const other = ContainerSpec(
+        image: 'x',
+        waitFor: WaitFor.healthy(),
+        network: ContainerNetwork('other'),
+      );
+
+      expect(
+        normalizeSpec(app).canonicalLines,
+        isNot(normalizeSpec(other).canonicalLines),
+      );
+    });
+
+    test('a different alias changes the hash, same network name', () {
+      // Different containers "how others address me" is different, even
+      // though the network itself is the same.
+      const noAlias = ContainerSpec(
+        image: 'x',
+        waitFor: WaitFor.healthy(),
+        network: ContainerNetwork('app'),
+      );
+      const withAlias = ContainerSpec(
+        image: 'x',
+        waitFor: WaitFor.healthy(),
+        network: ContainerNetwork('app', alias: 'db'),
+      );
+      const otherAlias = ContainerSpec(
+        image: 'x',
+        waitFor: WaitFor.healthy(),
+        network: ContainerNetwork('app', alias: 'cache'),
+      );
+
+      expect(
+        normalizeSpec(noAlias).canonicalLines,
+        isNot(normalizeSpec(withAlias).canonicalLines),
+      );
+      expect(
+        normalizeSpec(withAlias).canonicalLines,
+        isNot(normalizeSpec(otherAlias).canonicalLines),
+      );
+    });
+
+    test('networkMode and network together throw ArgumentError', () {
+      const spec = ContainerSpec(
+        image: 'x',
+        waitFor: WaitFor.healthy(),
+        networkMode: 'host',
+        network: ContainerNetwork('app'),
+      );
+
+      expect(() => normalizeSpec(spec), throwsArgumentError);
+    });
+
+    test('ContainerSpec itself still builds as a const with both set: the '
+        'validation only runs when the spec is used', () {
+      // normalizeSpec throws, but building the (invalid) spec must not.
+      const spec = ContainerSpec(
+        image: 'x',
+        waitFor: WaitFor.healthy(),
+        networkMode: 'host',
+        network: ContainerNetwork('app'),
+      );
+
+      expect(spec.networkMode, 'host');
     });
 
     test('canonical lines are stable across calls', () {

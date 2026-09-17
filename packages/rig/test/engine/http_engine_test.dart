@@ -669,6 +669,152 @@ void main() {
     });
   });
 
+  group('ensureNetwork', () {
+    test('sends the name and labels to /networks/create', () async {
+      server.on(
+        'POST',
+        '/v1.44/networks/create',
+        status: 201,
+        json: {'Id': 'net1', 'Warning': ''},
+      );
+
+      await engine.ensureNetwork('rig-app', {'dev.dart-forge.rig': '1'});
+
+      final body = server.requests.single.json;
+      expect(body['Name'], 'rig-app');
+      expect(body['Labels'], {'dev.dart-forge.rig': '1'});
+    });
+
+    test('treats 409 (already exists) as success', () async {
+      server.on(
+        'POST',
+        '/v1.44/networks/create',
+        status: 409,
+        json: {'message': 'network with name rig-app already exists'},
+      );
+
+      await expectLater(engine.ensureNetwork('rig-app', const {}), completes);
+    });
+
+    test('still throws on an unrelated error', () async {
+      server.on(
+        'POST',
+        '/v1.44/networks/create',
+        status: 500,
+        json: {'message': 'boom'},
+      );
+
+      await expectLater(
+        engine.ensureNetwork('rig-app', const {}),
+        throwsA(isA<EngineError>().having((e) => e.statusCode, 'status', 500)),
+      );
+    });
+  });
+
+  group('listNetworks', () {
+    test('sends filters as url-encoded json', () async {
+      server.on('GET', '/v1.44/networks', json: <Object?>[]);
+
+      await engine.listNetworks(
+        filters: {
+          'label': ['dev.dart-forge.rig=1'],
+        },
+      );
+
+      final uri = Uri.parse('http://x${server.requests.single.path}');
+      expect(uri.queryParameters['filters'], contains('dev.dart-forge.rig=1'));
+    });
+
+    test('sends no query at all when there are no filters', () async {
+      server.on('GET', '/v1.44/networks', json: <Object?>[]);
+
+      await engine.listNetworks();
+
+      expect(server.requests.single.path, '/v1.44/networks');
+    });
+
+    test('reports active endpoints from a non-empty Containers map', () async {
+      server.on(
+        'GET',
+        '/v1.44/networks',
+        json: [
+          {
+            'Id': 'net1',
+            'Name': 'rig-app',
+            'Containers': {
+              'c1': {'Name': 'some-container'},
+            },
+          },
+          {
+            'Id': 'net2',
+            'Name': 'rig-empty',
+            'Containers': <String, Object?>{},
+          },
+        ],
+      );
+
+      final found = await engine.listNetworks();
+
+      expect(
+        found.firstWhere((n) => n.name == 'rig-app').hasActiveEndpoints,
+        isTrue,
+      );
+      expect(
+        found.firstWhere((n) => n.name == 'rig-empty').hasActiveEndpoints,
+        isFalse,
+      );
+    });
+  });
+
+  group('removeNetwork', () {
+    test('returns true on success', () async {
+      server.on('DELETE', '/v1.44/networks/net1', status: 204);
+
+      expect(await engine.removeNetwork('net1'), isTrue);
+    });
+
+    test('treats 404 as success: the goal was for it to be gone', () async {
+      server.on(
+        'DELETE',
+        '/v1.44/networks/net1',
+        status: 404,
+        json: {'message': 'no such network'},
+      );
+
+      expect(await engine.removeNetwork('net1'), isTrue);
+    });
+
+    test(
+      'returns false rather than throwing on 403 (still has active endpoints)',
+      () async {
+        server.on(
+          'DELETE',
+          '/v1.44/networks/net1',
+          status: 403,
+          json: {
+            'message': 'network net1 has active endpoints (name:"c" id:"c1")',
+          },
+        );
+
+        expect(await engine.removeNetwork('net1'), isFalse);
+      },
+    );
+
+    test('still throws on an unrelated error', () async {
+      server.on(
+        'DELETE',
+        '/v1.44/networks/net1',
+        status: 500,
+        json: {'message': 'boom'},
+      );
+
+      await expectLater(
+        engine.removeNetwork('net1'),
+        throwsA(isA<EngineError>().having((e) => e.statusCode, 'status', 500)),
+      );
+    });
+  });
+
   group('imageExists', () {
     test('is true on 200', () async {
       server.on(

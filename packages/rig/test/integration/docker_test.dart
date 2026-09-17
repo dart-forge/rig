@@ -44,6 +44,7 @@ void main() {
   ContainerSpec alpine({
     Lifetime lifetime = Lifetime.shared,
     String marker = 'a',
+    ContainerNetwork? network,
   }) => ContainerSpec(
     image: 'alpine:3.20',
     // Keep it alive: alpine's default command exits at once.
@@ -57,6 +58,7 @@ void main() {
     ),
     waitFor: const WaitFor.healthy(timeout: Duration(seconds: 60)),
     lifetime: lifetime,
+    network: network,
   );
 
   Future<AcquiredContainer> acquire(ContainerSpec spec) => acquireContainer(
@@ -126,6 +128,105 @@ void main() {
 
     expect(b.containerId, isNot(a.containerId));
   }, timeout: const Timeout(Duration(minutes: 3)));
+
+  group('network', () {
+    Future<bool> removeNetworkByName(String dockerName) async {
+      final found = await engine.listNetworks(
+        filters: {
+          'label': [rigMarkerLabel],
+        },
+      );
+      final match = found.where((n) => n.name == dockerName);
+      if (match.isEmpty) return true; // never created, or already gone
+      return engine.removeNetwork(match.first.id);
+    }
+
+    test('two containers on a network resolve each other by alias, and the '
+        'same two containers without one cannot — proving the network, not '
+        'plain reachability, did it', () async {
+      // A network name unique to this run: two CI jobs on the same daemon
+      // at once must not race over the same `rig-<name>` network. This is
+      // the raw name a spec gives [ContainerNetwork] — rig adds its own
+      // `rig-` prefix, so the actual Docker network is `rig-it-network-<id>`.
+      final networkName = 'it-network-$runId';
+
+      // --- positive: on a shared network, alias resolves ---
+      final peer = await acquire(
+        alpine(
+          marker: 'net-peer',
+          lifetime: Lifetime.dedicated,
+          network: ContainerNetwork(networkName, alias: 'peer'),
+        ),
+      );
+      final caller = await acquire(
+        alpine(
+          marker: 'net-caller',
+          lifetime: Lifetime.dedicated,
+          network: ContainerNetwork(networkName),
+        ),
+      );
+      final peerLease = ContainerLease.of(engine, peer);
+      final callerLease = ContainerLease.of(engine, caller);
+
+      final withNetwork = await callerLease.exec([
+        'getent',
+        'hosts',
+        'peer',
+      ], expectSuccess: false);
+
+      // Release before the negative control: the point is that the two
+      // containers below cannot resolve the alias, not that they cannot
+      // resolve it *while it is being served by containers of the same
+      // name and marker*.
+      await peerLease.release();
+      await callerLease.release();
+      expect(
+        await removeNetworkByName(ContainerNetwork(networkName).dockerName),
+        isTrue,
+        reason:
+            'both endpoints were just released, so nothing should still '
+            'be attached',
+      );
+
+      // --- negative control: the same two containers, no network ---
+      final peerAgain = await acquire(
+        alpine(marker: 'net-peer', lifetime: Lifetime.dedicated),
+      );
+      final callerAgain = await acquire(
+        alpine(marker: 'net-caller', lifetime: Lifetime.dedicated),
+      );
+      final callerAgainLease = ContainerLease.of(engine, callerAgain);
+
+      final withoutNetwork = await callerAgainLease.exec([
+        'getent',
+        'hosts',
+        'peer',
+      ], expectSuccess: false);
+
+      await ContainerLease.of(engine, peerAgain).release();
+      await callerAgainLease.release();
+
+      // Both outcomes go in the report as required by the brief: this is
+      // the only evidence in the repository that the feature works at
+      // all, and a passing positive case alone cannot distinguish "the
+      // network did it" from "they could always reach each other".
+      // ignore: avoid_print
+      print(
+        'with network:    exit=${withNetwork.exitCode} '
+        'output=${withNetwork.output.trim()}',
+      );
+      // ignore: avoid_print
+      print(
+        'without network: exit=${withoutNetwork.exitCode} '
+        'output=${withoutNetwork.output.trim()}',
+      );
+
+      expect(withNetwork.exitCode, 0);
+      expect(withNetwork.output, contains('peer'));
+      expect(withoutNetwork.exitCode, isNot(0));
+      expect(withoutNetwork.output.trim(), isEmpty);
+    }, timeout: const Timeout(Duration(minutes: 3)));
+  });
 
   test('releasing a shared lease leaves the container running', () async {
     final acquired = await acquire(alpine(marker: 'keep'));

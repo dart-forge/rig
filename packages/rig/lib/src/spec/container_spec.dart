@@ -60,6 +60,34 @@ final class Healthcheck {
   final Duration startPeriod;
 }
 
+/// A user-defined network for containers that need to find each other by
+/// name.
+///
+/// rig prefixes the name it actually gives Docker, so `ContainerNetwork('app')`
+/// becomes `rig-app`. A bare `app` could silently reuse a network the caller,
+/// or something like Compose, already made for its own purposes; the prefix
+/// keeps rig's networks visibly its own, which is also what makes them safe
+/// for `rig prune` to find and remove.
+final class ContainerNetwork {
+  const ContainerNetwork(this.name, {this.alias});
+
+  /// rig creates `rig-<name>` if it does not exist.
+  final String name;
+
+  /// What containers on this network call this one.
+  ///
+  /// Docker assigns this container's own name (something like
+  /// `hungry_mendeleev`), which nothing in a spec can predict. The alias is
+  /// the only name another container on the same network can be told to use
+  /// in advance. Leaving it out means this container can still reach others
+  /// by their alias, but nothing can reach *it* by name — only by an address
+  /// no test can know ahead of time.
+  final String? alias;
+
+  /// The name Docker actually sees.
+  String get dockerName => 'rig-$name';
+}
+
 /// An immutable description of a container to run.
 ///
 /// Const-constructible on purpose: rig hashes the spec to decide whether a
@@ -79,6 +107,7 @@ final class ContainerSpec {
     this.workingDir,
     this.privileged = false,
     this.networkMode,
+    this.network,
     this.healthcheck,
     this.lifetime = Lifetime.shared,
   });
@@ -107,7 +136,15 @@ final class ContainerSpec {
   final String? user;
   final String? workingDir;
   final bool privileged;
+
+  /// A raw Docker network mode, e.g. `host` or `none`. Mutually exclusive
+  /// with [network]: `normalizeSpec` throws if both are set.
   final String? networkMode;
+
+  /// A network rig creates and connects this container to. Mutually
+  /// exclusive with [networkMode].
+  final ContainerNetwork? network;
+
   final Healthcheck? healthcheck;
   final Lifetime lifetime;
 
@@ -132,6 +169,7 @@ final class ContainerSpec {
     String? workingDir,
     bool? privileged,
     String? networkMode,
+    ContainerNetwork? network,
     Healthcheck? healthcheck,
     Lifetime? lifetime,
   }) {
@@ -149,6 +187,7 @@ final class ContainerSpec {
       workingDir: workingDir ?? this.workingDir,
       privileged: privileged ?? this.privileged,
       networkMode: networkMode ?? this.networkMode,
+      network: network ?? this.network,
       healthcheck: healthcheck ?? this.healthcheck,
       lifetime: lifetime ?? this.lifetime,
     );
@@ -175,11 +214,27 @@ final class NormalizedSpec {
 /// Excluded on purpose: `waitFor` (does not change the container, so suites
 /// that wait differently can still share one), `lifetime` (the same container
 /// either way), and `labels` (annotating must not split sharing).
+///
+/// Throws [ArgumentError] when both [ContainerSpec.networkMode] and
+/// [ContainerSpec.network] are set. The check lives here rather than in
+/// [ContainerSpec]'s constructor so a spec stays const-constructible; it runs
+/// once, right before the spec is used, rather than at every place one is
+/// declared.
 NormalizedSpec normalizeSpec(ContainerSpec spec) {
+  if (spec.networkMode != null && spec.network != null) {
+    throw ArgumentError(
+      'ContainerSpec.networkMode and ContainerSpec.network are mutually '
+      'exclusive. networkMode is for raw Docker modes like "host" or '
+      '"none"; network is for a user-defined network rig creates and '
+      'connects this container to.',
+    );
+  }
+
   final sortedEnv = spec.env.keys.toList()..sort();
   final sortedPorts = spec.exposedPorts.toSet().toList()..sort();
   final sortedTmpfs = spec.tmpfs.toList()..sort();
   final sortedMounts = spec.mounts.toList()..sort(compareMounts);
+  final network = spec.network;
 
   return NormalizedSpec([
     'image=${spec.image}',
@@ -195,6 +250,12 @@ NormalizedSpec normalizeSpec(ContainerSpec spec) {
     if (spec.workingDir != null) 'workdir=${spec.workingDir}',
     if (spec.privileged) 'privileged=true',
     if (spec.networkMode != null) 'network=${spec.networkMode}',
+    // Named distinctly from the `network=` line above so the two can never
+    // collide, even though the constructor never lets both appear together.
+    // A different alias changes how other containers on the network address
+    // this one, so it has to split the hash exactly like the name does.
+    if (network != null) 'usernetwork.name=${network.name}',
+    if (network?.alias != null) 'usernetwork.alias=${network!.alias}',
     ..._healthcheckLines(spec.healthcheck),
   ]);
 }

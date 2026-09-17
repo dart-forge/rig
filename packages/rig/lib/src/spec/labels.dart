@@ -44,6 +44,13 @@ Map<String, String> buildRigLabels({
   };
 }
 
+/// The labels rig puts on a network it creates.
+///
+/// Only the marker: a network is not hashed or reused the way a container
+/// is, so it carries none of the identifying labels `buildRigLabels` adds.
+/// `rig prune` needs just enough to recognise the network as rig's own.
+Map<String, String> buildRigNetworkLabels() => const {rigMarkerLabel: '1'};
+
 const int _summaryBudget = 200;
 
 /// A one-line description of [spec] for human eyes.

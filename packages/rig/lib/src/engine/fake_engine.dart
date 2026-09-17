@@ -61,9 +61,31 @@ final class FakeDockerEngine implements DockerEngine {
   ];
 
   final Map<String, _FakeContainer> _containers = {};
+  final Map<String, _FakeNetwork> _networksByName = {};
   int _nextId = 1;
 
+  /// Adds a network as if a previous run left it, for tests that exercise
+  /// `rig prune`'s network cleanup without going through [ensureNetwork] or
+  /// [createContainer].
+  String addNetwork({
+    required String name,
+    Map<String, String> labels = const {},
+    List<String> connectedContainerIds = const [],
+  }) {
+    final net = _FakeNetwork(
+      id: 'net${_nextId++}',
+      name: name,
+      labels: Map.of(labels),
+    )..connectedContainerIds.addAll(connectedContainerIds);
+    _networksByName[name] = net;
+    return net.id;
+  }
+
   /// Adds a container that already exists, as if a previous run left it.
+  ///
+  /// [network] is the Docker network *name* (the same string passed to
+  /// [addNetwork]'s `name`), for a caller that wants [removeContainer] to
+  /// free that network's active endpoint again, the way Docker would.
   String addContainer({
     required Map<String, String> labels,
     String image = 'scratch:latest',
@@ -72,6 +94,7 @@ final class FakeDockerEngine implements DockerEngine {
     Map<int, int> hostPorts = const {},
     List<HealthStatus> health = const [],
     String logs = '',
+    String? network,
   }) {
     final id = 'fake${_nextId++}';
     _containers[id] = _FakeContainer(
@@ -84,6 +107,7 @@ final class FakeDockerEngine implements DockerEngine {
       hostPorts: Map.of(hostPorts),
       health: [...health],
       logs: logs,
+      network: network,
     );
     return id;
   }
@@ -152,6 +176,16 @@ final class FakeDockerEngine implements DockerEngine {
     lastCreatedLabels = Map.of(labels);
 
     final id = 'fake${_nextId++}';
+    final networkName = spec.network?.dockerName;
+    if (networkName != null) {
+      _networksByName
+          .putIfAbsent(
+            networkName,
+            () => _FakeNetwork(id: 'net${_nextId++}', name: networkName),
+          )
+          .connectedContainerIds
+          .add(id);
+    }
     _containers[id] = _FakeContainer(
       id: id,
       image: spec.image,
@@ -162,6 +196,7 @@ final class FakeDockerEngine implements DockerEngine {
       hostPorts: {for (final port in spec.exposedPorts) port: nextHostPort++},
       health: spec.healthcheck == null ? [] : [...healthAfterCreate],
       logs: '',
+      network: networkName,
     );
     return id;
   }
@@ -217,7 +252,76 @@ final class FakeDockerEngine implements DockerEngine {
     calls.add('remove:$id');
     final error = removeError;
     if (error != null) throw error;
-    _containers.remove(id);
+    final removed = _containers.remove(id);
+    // Docker disconnects a removed container from every network it was on;
+    // mirroring that here is what lets a fake-backed prune test see a
+    // network's active endpoints drop to zero once its container is gone.
+    final networkName = removed?.network;
+    if (networkName != null) {
+      _networksByName[networkName]?.connectedContainerIds.remove(id);
+    }
+  }
+
+  @override
+  Future<void> ensureNetwork(String name, Map<String, String> labels) async {
+    calls.add('ensureNetwork:$name');
+    _networksByName.putIfAbsent(
+      name,
+      () => _FakeNetwork(
+        id: 'net${_nextId++}',
+        name: name,
+        labels: Map.of(labels),
+      ),
+    );
+  }
+
+  @override
+  Future<List<NetworkSummary>> listNetworks({
+    Map<String, List<String>> filters = const {},
+  }) async {
+    calls.add('listNetworks');
+    return _networksByName.values
+        .where((n) => _matchesNetworkFilter(n, filters))
+        .map(
+          (n) => NetworkSummary(
+            id: n.id,
+            name: n.name,
+            hasActiveEndpoints: n.connectedContainerIds.isNotEmpty,
+          ),
+        )
+        .toList();
+  }
+
+  @override
+  Future<bool> removeNetwork(String id) async {
+    calls.add('removeNetwork:$id');
+    _FakeNetwork? found;
+    for (final n in _networksByName.values) {
+      if (n.id == id) {
+        found = n;
+        break;
+      }
+    }
+    if (found == null) return true; // already gone
+    if (found.connectedContainerIds.isNotEmpty) return false;
+    _networksByName.remove(found.name);
+    return true;
+  }
+
+  bool _matchesNetworkFilter(
+    _FakeNetwork n,
+    Map<String, List<String>> filters,
+  ) {
+    for (final wanted in filters['label'] ?? const <String>[]) {
+      final parts = wanted.split('=');
+      final key = parts.first;
+      if (parts.length == 1) {
+        if (!n.labels.containsKey(key)) return false;
+      } else if (n.labels[key] != parts.sublist(1).join('=')) {
+        return false;
+      }
+    }
+    return true;
   }
 
   @override
@@ -261,6 +365,7 @@ final class _FakeContainer {
     required this.hostPorts,
     required this.health,
     required this.logs,
+    this.network,
   });
 
   final String id;
@@ -273,10 +378,26 @@ final class _FakeContainer {
   List<HealthStatus> health;
   String logs;
 
+  /// The Docker network name (already `rig-`-prefixed) this container was
+  /// created on, or null when its spec had none.
+  final String? network;
+
   /// Pops the next queued status, holding the last one once exhausted.
   HealthStatus nextHealth() {
     if (health.isEmpty) return HealthStatus.none;
     if (health.length == 1) return health.first;
     return health.removeAt(0);
   }
+}
+
+final class _FakeNetwork {
+  _FakeNetwork({required this.id, required this.name, this.labels = const {}});
+
+  final String id;
+  final String name;
+  final Map<String, String> labels;
+
+  /// Ids of containers currently attached, i.e. what backs
+  /// [NetworkSummary.hasActiveEndpoints].
+  final Set<String> connectedContainerIds = {};
 }

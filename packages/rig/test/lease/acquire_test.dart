@@ -35,6 +35,45 @@ void main() {
         sleep: (_) async {},
       );
 
+  group('network', () {
+    const withNetwork = ContainerSpec(
+      image: 'postgres:16-alpine',
+      exposedPorts: [5432],
+      waitFor: WaitFor.healthy(),
+      healthcheck: Healthcheck(test: ['CMD', 'true']),
+      network: ContainerNetwork('app', alias: 'db'),
+    );
+
+    test(
+      'ensures the rig-prefixed network before creating the container',
+      () async {
+        await acquire(withNetwork);
+
+        expect(
+          engine.calls,
+          containsAllInOrder(['ensureNetwork:rig-app', 'create']),
+        );
+      },
+    );
+
+    test('labels the network so prune can find it', () async {
+      await acquire(withNetwork);
+
+      final networks = await engine.listNetworks(
+        filters: {
+          'label': [rigMarkerLabel],
+        },
+      );
+      expect(networks.map((n) => n.name), ['rig-app']);
+    });
+
+    test('does not touch the network when the spec names none', () async {
+      await acquire();
+
+      expect(engine.calls.any((c) => c.startsWith('ensureNetwork')), isFalse);
+    });
+  });
+
   group('when nothing exists yet', () {
     test('pulls the image, creates, starts and reports not reused', () async {
       final acquired = await acquire();
@@ -364,6 +403,18 @@ final class _PullProbingEngine implements DockerEngine {
 
   @override
   Future<void> removeContainer(String id) => _inner.removeContainer(id);
+
+  @override
+  Future<void> ensureNetwork(String name, Map<String, String> labels) =>
+      _inner.ensureNetwork(name, labels);
+
+  @override
+  Future<List<NetworkSummary>> listNetworks({
+    Map<String, List<String>> filters = const {},
+  }) => _inner.listNetworks(filters: filters);
+
+  @override
+  Future<bool> removeNetwork(String id) => _inner.removeNetwork(id);
 
   @override
   Future<void> close() => _inner.close();

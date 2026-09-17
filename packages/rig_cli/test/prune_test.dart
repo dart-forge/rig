@@ -42,6 +42,7 @@ void main() {
     String hash, {
     required DateTime created,
     String lifetime = 'shared',
+    String? network,
   }) => engine.addContainer(
     labels: {
       rigMarkerLabel: '1',
@@ -50,6 +51,7 @@ void main() {
       rigSummaryLabel: 'postgres:16-alpine',
     },
     created: created,
+    network: network,
   );
 
   test('removes containers older than the threshold', () async {
@@ -243,6 +245,104 @@ void main() {
       // suitesDir may not exist yet on a machine that has never run a
       // module built on createSuiteDatabase.
       await expectLater(prune(), completes);
+    });
+  });
+
+  group('networks', () {
+    test('removes a rig network with no containers attached', () async {
+      final netId = engine.addNetwork(
+        name: 'rig-app',
+        labels: {rigMarkerLabel: '1'},
+      );
+
+      await prune(all: true);
+
+      expect(engine.calls, contains('removeNetwork:$netId'));
+      expect(await engine.listNetworks(), isEmpty);
+    });
+
+    test('reports the network it removed', () async {
+      engine.addNetwork(name: 'rig-app', labels: {rigMarkerLabel: '1'});
+
+      await prune(all: true);
+
+      expect(lines.join('\n'), contains('removed network rig-app'));
+    });
+
+    test('counts networks in the summary line', () async {
+      engine.addNetwork(name: 'rig-app', labels: {rigMarkerLabel: '1'});
+
+      await prune(all: true);
+
+      expect(lines.join('\n'), contains('1 network(s)'));
+    });
+
+    test('never touches a network without rig\'s label', () async {
+      final foreign = engine.addNetwork(name: 'someone-elses-net');
+
+      await prune(all: true);
+
+      expect(engine.calls.contains('removeNetwork:$foreign'), isFalse);
+    });
+
+    test(
+      'leaves a network with an active endpoint alone, and says so',
+      () async {
+        engine.addNetwork(
+          name: 'rig-busy',
+          labels: {rigMarkerLabel: '1'},
+          connectedContainerIds: ['still-there'],
+        );
+
+        await prune(all: true);
+
+        expect(
+          lines.join('\n'),
+          contains('network(s) still in use, not removed: rig-busy'),
+        );
+        final networks = await engine.listNetworks();
+        expect(
+          networks,
+          hasLength(1),
+          reason: 'a network prune could not remove must still be there',
+        );
+      },
+    );
+
+    test(
+      'removes a container and its now-empty network in the same run',
+      () async {
+        // Order matters: if the network were attempted before the container
+        // that made it unremovable, this would incorrectly report it as
+        // still in use.
+        final containerId = id(
+          'old',
+          created: DateTime.utc(2026, 9, 1),
+          network: 'rig-app',
+        );
+        engine.addNetwork(
+          name: 'rig-app',
+          labels: {rigMarkerLabel: '1'},
+          connectedContainerIds: [containerId],
+        );
+
+        await prune();
+
+        expect(engine.calls, contains('remove:$containerId'));
+        expect(await engine.listNetworks(), isEmpty);
+        expect(
+          lines.join('\n'),
+          isNot(contains('still in use')),
+          reason:
+              'the container that made it busy was removed in this same run',
+        );
+      },
+    );
+
+    test('says nothing about networks when there are none', () async {
+      await prune();
+
+      expect(lines.join('\n'), contains('Nothing to remove.'));
     });
   });
 }

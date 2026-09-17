@@ -26,6 +26,16 @@ ContainerSummary parseSummary(Map<String, Object?> json) => ContainerSummary(
   names: [for (final n in (json['Names'] as List? ?? const [])) n.toString()],
 );
 
+/// Reads one entry of `GET /networks`.
+NetworkSummary parseNetworkSummary(Map<String, Object?> json) {
+  final containers = json['Containers'];
+  return NetworkSummary(
+    id: json['Id'] as String? ?? '',
+    name: json['Name'] as String? ?? '',
+    hasActiveEndpoints: containers is Map && containers.isNotEmpty,
+  );
+}
+
 /// Docker reports `none` for a container without a healthcheck, and an
 /// unfamiliar value is treated the same way: rig must not read an unknown
 /// state as ready.

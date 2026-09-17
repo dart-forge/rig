@@ -68,6 +68,22 @@ final class ContainerSummary {
   final List<String> names;
 }
 
+/// A network as it appears in a listing.
+final class NetworkSummary {
+  const NetworkSummary({
+    required this.id,
+    required this.name,
+    required this.hasActiveEndpoints,
+  });
+
+  final String id;
+  final String name;
+
+  /// True when at least one container is currently attached. Docker refuses
+  /// to remove a network while this is true.
+  final bool hasActiveEndpoints;
+}
+
 /// A container as it appears on inspection.
 final class ContainerInspect {
   const ContainerInspect({
@@ -151,6 +167,28 @@ abstract interface class DockerEngine {
   Future<void> stopContainer(String id, {Duration timeout});
 
   Future<void> removeContainer(String id);
+
+  /// Creates a network named [name] carrying [labels] if none exists yet.
+  ///
+  /// Idempotent: an existing network with this name is left alone and
+  /// treated as success. That is what makes it safe to call with no
+  /// coordination when two specs name the same network at once — whichever
+  /// request the daemon serves first wins, and the other sees "already
+  /// there" rather than an error.
+  Future<void> ensureNetwork(String name, Map<String, String> labels);
+
+  /// Networks matching [filters], in the same form [listContainers] takes.
+  Future<List<NetworkSummary>> listNetworks({
+    Map<String, List<String>> filters,
+  });
+
+  /// Removes the network [id].
+  ///
+  /// Returns false, rather than throwing, when Docker refuses because a
+  /// container is still attached — that is an expected outcome for a caller
+  /// like `rig prune` walking every network it owns, not a failure of the
+  /// remove call itself. Any other error still throws [EngineError].
+  Future<bool> removeNetwork(String id);
 
   Future<void> close();
 }

@@ -368,6 +368,57 @@ final class HttpDockerEngine implements DockerEngine {
   }
 
   @override
+  Future<void> ensureNetwork(String name, Map<String, String> labels) async {
+    final res = await _send(
+      'POST',
+      '/networks/create',
+      body: {'Name': name, 'Labels': labels},
+    );
+    // 409: a network with this name already exists, which is exactly what
+    // ensureNetwork was asked for.
+    if (res.statusCode == 409 || res.statusCode < 400) return;
+    throw EngineError(
+      method: 'POST',
+      path: res.path,
+      statusCode: res.statusCode,
+      body: res.text,
+    );
+  }
+
+  @override
+  Future<List<NetworkSummary>> listNetworks({
+    Map<String, List<String>> filters = const {},
+  }) async {
+    final query = filters.isNotEmpty
+        ? '?${_query({'filters': jsonEncode(filters)})}'
+        : '';
+    final res = await _sendOk('GET', '/networks$query');
+    final decoded = jsonDecode(res.text);
+    if (decoded is! List) return const [];
+    return [
+      for (final item in decoded)
+        if (item is Map<String, Object?>) parseNetworkSummary(item),
+    ];
+  }
+
+  @override
+  Future<bool> removeNetwork(String id) async {
+    final res = await _send('DELETE', '/networks/$id');
+    // 404: already gone, which is what removing it was for.
+    if (res.statusCode == 404 || res.statusCode < 400) return true;
+    // 403: a container is still attached. This is the expected, common
+    // outcome of `rig prune` walking every network it owns, not a failure of
+    // the remove call — the caller decides what "still in use" means to it.
+    if (res.statusCode == 403) return false;
+    throw EngineError(
+      method: 'DELETE',
+      path: res.path,
+      statusCode: res.statusCode,
+      body: res.text,
+    );
+  }
+
+  @override
   Future<bool> imageExists(String image) async {
     final res = await _send('GET', '/images/$image/json');
     return res.statusCode < 400;

@@ -39,6 +39,11 @@ Future<int> runPrune({
     out('removed ${_shortId(container.id)}  $summary');
   }
 
+  // Networks only after containers: removing a container this run just
+  // doomed is what frees the network it was on, so trying networks first
+  // would hit "still in use" for networks this same run was about to clear.
+  final networkResult = await _pruneNetworks(engine, out);
+
   final clearedMarkers = _clearMarkers(
     stateDir,
     forIds: {
@@ -63,10 +68,14 @@ Future<int> runPrune({
     knownIds: knownContainerIds,
   );
 
-  if (doomed.isEmpty && clearedMarkers == 0 && clearedSuiteDirs == 0) {
+  if (doomed.isEmpty &&
+      networkResult.removed == 0 &&
+      clearedMarkers == 0 &&
+      clearedSuiteDirs == 0) {
     out('Nothing to remove.');
   } else {
     final extras = [
+      if (networkResult.removed > 0) '${networkResult.removed} network(s)',
       if (clearedMarkers > 0) '$clearedMarkers stale marker(s)',
       if (clearedSuiteDirs > 0)
         '$clearedSuiteDirs stale suite '
@@ -75,7 +84,50 @@ Future<int> runPrune({
     final suffix = extras.isEmpty ? '' : ' and ${extras.join(' and ')}';
     out('Removed ${doomed.length} container(s)$suffix.');
   }
+
+  // Never silent: a network Docker refuses to drop is exactly the kind of
+  // thing `--all` is supposed to surface, not swallow.
+  if (networkResult.stillInUse.isNotEmpty) {
+    out(
+      '${networkResult.stillInUse.length} network(s) still in use, not '
+      'removed: ${networkResult.stillInUse.join(', ')}',
+    );
+  }
+
   return 0;
+}
+
+typedef _NetworkPruneResult = ({int removed, List<String> stillInUse});
+
+/// Removes every rig-labelled network with no containers attached.
+///
+/// Docker itself is the source of truth for "in use": rather than trusting
+/// [NetworkSummary.hasActiveEndpoints] from the listing (which could be
+/// stale relative to the containers this same run just removed, or simply
+/// wrong for a network this run has no reason to touch), every rig network
+/// gets an attempt, and [DockerEngine.removeNetwork]'s own answer decides
+/// which bucket it lands in.
+Future<_NetworkPruneResult> _pruneNetworks(
+  DockerEngine engine,
+  void Function(String) out,
+) async {
+  final networks = await engine.listNetworks(
+    filters: {
+      'label': [rigMarkerLabel],
+    },
+  );
+
+  var removed = 0;
+  final stillInUse = <String>[];
+  for (final network in networks) {
+    if (await engine.removeNetwork(network.id)) {
+      removed++;
+      out('removed network ${network.name}');
+    } else {
+      stillInUse.add(network.name);
+    }
+  }
+  return (removed: removed, stillInUse: stillInUse);
 }
 
 /// Docker's real container ids are 64 hex characters; the first 12 are

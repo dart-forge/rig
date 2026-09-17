@@ -51,6 +51,14 @@ final class AcquiredContainer {
 /// idempotent and Docker coalesces concurrent pulls of the same reference,
 /// so nothing is lost by asking before knowing whether this call will end up
 /// reusing a container instead of creating one.
+///
+/// The network, when the spec names one, is ensured here for the same
+/// reason: `ensureNetwork` is idempotent, so two suites racing to create
+/// `rig-app` at once cost an extra `POST /networks/create` that answers
+/// "already there" rather than a coordination failure. Doing it inside the
+/// per-hash lock would buy nothing — the lock is keyed by the *container*
+/// spec's hash, not the network's name, so two different specs that happen
+/// to share a network name would not even take the same lock.
 Future<AcquiredContainer> acquireContainer({
   required ContainerSpec spec,
   required DockerEngine engine,
@@ -66,6 +74,10 @@ Future<AcquiredContainer> acquireContainer({
   final labels = buildRigLabels(spec: spec, hash: hash, project: project);
 
   await _ensureImage(spec.image, engine);
+  final network = spec.network;
+  if (network != null) {
+    await engine.ensureNetwork(network.dockerName, buildRigNetworkLabels());
+  }
 
   final placed = spec.lifetime == Lifetime.dedicated
       // A private container cannot collide with anyone, so there is nothing

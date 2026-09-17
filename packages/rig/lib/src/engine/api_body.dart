@@ -10,6 +10,8 @@ Map<String, Object?> buildCreateBody(
 ) {
   final ports = spec.exposedPorts.toSet().toList()..sort();
 
+  final network = spec.network;
+
   return {
     'Image': spec.image,
     'Env': [for (final e in spec.env.entries) '${e.key}=${e.value}'],
@@ -24,6 +26,22 @@ Map<String, Object?> buildCreateBody(
       'ExposedPorts': {for (final p in ports) '$p/tcp': <String, Object?>{}},
     if (spec.healthcheck != null)
       'Healthcheck': _healthcheck(spec.healthcheck!),
+    // NetworkingConfig alone attaches the container to this network and
+    // *only* this network — verified against a real daemon. HostConfig's own
+    // NetworkMode is left unset: Docker reports it back as "bridge" either
+    // way, but only NetworkingConfig actually decides what the container
+    // joins, and sending NetworkMode too would say the same thing twice.
+    if (network != null)
+      'NetworkingConfig': {
+        'EndpointsConfig': {
+          network.dockerName: {
+            // An empty Aliases would be sent otherwise, and Docker treats
+            // that differently from omitting the key entirely — same reason
+            // Entrypoint above is conditional.
+            if (network.alias != null) 'Aliases': [network.alias],
+          },
+        },
+      },
     'HostConfig': {
       if (ports.isNotEmpty)
         'PortBindings': {
