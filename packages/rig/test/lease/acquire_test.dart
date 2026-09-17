@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:rig/engine.dart';
 import 'package:rig/fake_engine.dart';
 import 'package:rig/rig.dart';
@@ -258,6 +259,56 @@ void main() {
     });
   });
 
+  group('build', () {
+    late Directory contextDir;
+
+    setUp(() {
+      contextDir = Directory(p.join(tmp.path, 'ctx'))..createSync();
+      File(p.join(contextDir.path, 'Dockerfile')).writeAsStringSync('FROM x');
+    });
+
+    ContainerSpec buildSpec() => ContainerSpec(
+      image: 'app:local',
+      waitFor: const WaitFor.healthy(),
+      healthcheck: const Healthcheck(test: ['CMD', 'true']),
+      build: ContainerBuild(context: contextDir.path),
+    );
+
+    test('builds instead of pulling', () async {
+      await acquire(buildSpec());
+
+      expect(engine.calls, contains('build:app:local'));
+      expect(engine.calls.any((c) => c.startsWith('pull:')), isFalse);
+      expect(engine.lastBuildTag, 'app:local');
+    });
+
+    test(
+      'builds every time, even when a matching container is reused',
+      () async {
+        final spec = buildSpec();
+        await acquire(spec);
+        engine.calls.clear();
+
+        await acquire(spec);
+
+        expect(
+          engine.calls,
+          contains('build:app:local'),
+          reason: 'there is no "is the image current" check to skip this',
+        );
+      },
+    );
+
+    test('a failed build propagates ImageBuildFailed and never reaches '
+        'createContainer', () async {
+      engine.buildSucceeds = false;
+      engine.buildFailureDetail = 'RUN exit 1';
+
+      await expectLater(acquire(buildSpec()), throwsA(isA<ImageBuildFailed>()));
+      expect(engine.calls.contains('create'), isFalse);
+    });
+  });
+
   test('two concurrent acquires of one spec share a container', () async {
     engine.addContainer(
       labels: {
@@ -355,6 +406,10 @@ final class _PullProbingEngine implements DockerEngine {
     _onPull();
     return _inner.pullImage(image);
   }
+
+  @override
+  Future<void> buildImage(ContainerBuild build, String tag) =>
+      _inner.buildImage(build, tag);
 
   @override
   Future<void> ping() => _inner.ping();

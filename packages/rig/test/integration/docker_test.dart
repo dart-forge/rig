@@ -3,6 +3,7 @@ library;
 
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:rig/engine.dart';
 import 'package:rig/rig.dart';
 import 'package:test/test.dart';
@@ -446,5 +447,123 @@ void main() {
       expect(result.exitCode, 0);
       expect(result.output.trim(), 'exec ok');
     }, timeout: const Timeout(Duration(minutes: 5)));
+  });
+
+  group('build', () {
+    late Directory contextDir;
+
+    setUp(() {
+      contextDir = Directory(p.join(tmp.path, 'ctx'))..createSync();
+    });
+
+    /// Best-effort: it is test hygiene, not the feature under test, so a
+    /// failure here must not fail the test that already made its point.
+    Future<void> removeImageTag(String tag) async {
+      try {
+        await Process.run('docker', ['rmi', '-f', tag]);
+      } on Object {
+        // Nothing to do about it here.
+      }
+    }
+
+    ContainerSpec builtAlpine(String tag) => ContainerSpec(
+      image: tag,
+      command: const ['sleep', '300'],
+      labels: {_ownLabel: runId},
+      healthcheck: const Healthcheck(
+        test: ['CMD-SHELL', 'true'],
+        interval: Duration(milliseconds: 250),
+        retries: 20,
+      ),
+      waitFor: const WaitFor.healthy(timeout: Duration(seconds: 60)),
+      build: ContainerBuild(context: contextDir.path),
+    );
+
+    test(
+      'builds an image from a Dockerfile and runs a container from it',
+      () async {
+        final tag = 'rig-build-test:$runId';
+        addTearDown(() => removeImageTag(tag));
+        File(p.join(contextDir.path, 'Dockerfile')).writeAsStringSync('''
+FROM alpine:3.20
+RUN echo "built by rig $runId" > /etc/rig-probe
+''');
+
+        final acquired = await acquire(builtAlpine(tag));
+        final lease = ContainerLease.of(engine, acquired);
+
+        final probe = await lease.exec(['cat', '/etc/rig-probe']);
+
+        expect(
+          probe.output,
+          contains('built by rig $runId'),
+          reason:
+              'proves the container is running the image rig just built, '
+              'not some pre-existing image under the same tag',
+        );
+      },
+      timeout: const Timeout(Duration(minutes: 3)),
+    );
+
+    test('a Dockerfile that fails inside RUN throws ImageBuildFailed carrying '
+        'the build output, even though POST /build answered 200', () async {
+      final tag = 'rig-build-fail-test:$runId';
+      addTearDown(() => removeImageTag(tag));
+      File(p.join(contextDir.path, 'Dockerfile')).writeAsStringSync('''
+FROM alpine:3.20
+RUN echo "about to fail, marker $runId"
+RUN exit 1
+''');
+
+      Object? caught;
+      try {
+        await acquire(builtAlpine(tag));
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught, isA<ImageBuildFailed>());
+      // Printed for the record: this is the only evidence in the
+      // repository that a build failing inside the response stream (not
+      // the HTTP status) surfaces as ImageBuildFailed, with the build
+      // output attached.
+      // ignore: avoid_print
+      print(
+        'ImageBuildFailed message:\n${(caught as ImageBuildFailed).message}',
+      );
+
+      expect(
+        caught.message,
+        contains('about to fail, marker $runId'),
+        reason:
+            'the output leading up to the failure must be in the '
+            'message, or there is no way to tell which RUN step broke',
+      );
+      expect(caught.message, contains('exit 1'));
+    }, timeout: const Timeout(Duration(minutes: 3)));
+
+    test('the executable bit on a context file survives the build: a RUN of '
+        'it only succeeds if the mode came through', () async {
+      final tag = 'rig-build-mode-test:$runId';
+      addTearDown(() => removeImageTag(tag));
+      final script = File(p.join(contextDir.path, 'probe.sh'))
+        ..writeAsStringSync('#!/bin/sh\necho "script ran, marker $runId"\n');
+      await Process.run('chmod', ['755', script.path]);
+      File(p.join(contextDir.path, 'Dockerfile')).writeAsStringSync('''
+FROM alpine:3.20
+COPY probe.sh /probe.sh
+RUN /probe.sh
+''');
+
+      // If the executable bit were lost, RUN /probe.sh would fail with
+      // "Permission denied" and this would throw ImageBuildFailed instead
+      // of returning — a passing acquire is the proof the mode survived.
+      final acquired = await acquire(builtAlpine(tag));
+
+      expect(
+        (await engine.inspectContainer(acquired.containerId)).running,
+        isTrue,
+      );
+    }, timeout: const Timeout(Duration(minutes: 3)));
   });
 }

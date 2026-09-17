@@ -1012,6 +1012,137 @@ void main() {
     });
   });
 
+  group('buildImage', () {
+    late Directory contextDir;
+
+    setUp(() {
+      contextDir = Directory(p.join(tmp.path, 'ctx'))..createSync();
+      File(p.join(contextDir.path, 'Dockerfile'))
+          .writeAsStringSync('FROM alpine:3.20\n');
+    });
+
+    ContainerBuild build({Map<String, String> args = const {}}) =>
+        ContainerBuild(context: contextDir.path, args: args);
+
+    test('posts the context as a tar to /build with tag and dockerfile '
+        'in the query', () async {
+      server.on(
+        'POST',
+        '/v1.44/build',
+        body: '{"stream":"Successfully tagged app:local\\n"}',
+      );
+
+      await engine.buildImage(build(), 'app:local');
+
+      final req = server.requests.single;
+      final uri = Uri.parse('http://x${req.path}');
+      expect(uri.path, '/v1.44/build');
+      expect(uri.queryParameters['t'], 'app:local');
+      expect(uri.queryParameters['dockerfile'], 'Dockerfile');
+      // A well-formed ustar stream starts with the first header's name
+      // field, here "Dockerfile" followed by NUL padding.
+      expect(req.body, startsWith('Dockerfile'));
+    });
+
+    test('sends build args as a JSON query parameter', () async {
+      server.on('POST', '/v1.44/build', body: '{"stream":"done"}');
+
+      await engine.buildImage(build(args: {'VERSION': '1.2.3'}), 'app:local');
+
+      final uri = Uri.parse('http://x${server.requests.single.path}');
+      expect(uri.queryParameters['buildargs'], contains('VERSION'));
+      expect(uri.queryParameters['buildargs'], contains('1.2.3'));
+    });
+
+    test('succeeds on a stream that only reports progress', () async {
+      server.on(
+        'POST',
+        '/v1.44/build',
+        body:
+            '{"stream":"Step 1/1 : FROM alpine:3.20\\n"}\n'
+            '{"stream":"Successfully tagged app:local\\n"}\n',
+      );
+
+      await expectLater(engine.buildImage(build(), 'app:local'), completes);
+    });
+
+    test('throws ImageBuildFailed when the stream reports an error, even '
+        'though the status code is 200 — the exact trap a status-code-only '
+        'check falls into', () async {
+      server.on(
+        'POST',
+        '/v1.44/build',
+        status: 200,
+        body:
+            '{"stream":"Step 1/2 : FROM alpine:3.20\\n"}\n'
+            '{"stream":"Step 2/2 : RUN exit 1\\n"}\n'
+            '{"errorDetail":{"code":1,"message":"The command \'/bin/sh -c '
+            'exit 1\' returned a non-zero code: 1"},'
+            '"error":"The command \'/bin/sh -c exit 1\' returned a '
+            'non-zero code: 1"}\n',
+      );
+
+      await expectLater(
+        engine.buildImage(build(), 'app:local'),
+        throwsA(
+          isA<ImageBuildFailed>()
+              .having((e) => e.tag, 'tag', 'app:local')
+              .having((e) => e.detail, 'detail', contains('non-zero code: 1'))
+              .having(
+                (e) => e.detail,
+                'detail (build output)',
+                contains('Step 2/2 : RUN exit 1'),
+              ),
+        ),
+      );
+    });
+
+    test('throws ImageBuildFailed on a request-level error status', () async {
+      server.on(
+        'POST',
+        '/v1.44/build',
+        status: 500,
+        json: {'message': 'daemon on fire'},
+      );
+
+      await expectLater(
+        engine.buildImage(build(), 'app:local'),
+        throwsA(
+          isA<ImageBuildFailed>().having(
+            (e) => e.detail,
+            'detail',
+            contains('daemon on fire'),
+          ),
+        ),
+      );
+    });
+
+    test('a build gets its own timeout budget', () async {
+      server.on(
+        'POST',
+        '/v1.44/build',
+        delay: const Duration(milliseconds: 300),
+      );
+      final bounded = HttpDockerEngine(
+        socketPath: socketPath,
+        requestTimeout: const Duration(seconds: 30),
+        buildTimeout: const Duration(milliseconds: 50),
+      );
+      addTearDown(bounded.close);
+
+      await expectLater(
+        bounded.buildImage(build(), 'app:local'),
+        throwsA(
+          isA<ImageBuildFailed>().having(
+            (e) => e.detail,
+            'detail',
+            contains('50'),
+          ),
+        ),
+      );
+    });
+  });
+
   group('exec', () {
     Map<String, Object?> lastBodyFor(String pathPrefix) =>
         server.requests.lastWhere((r) => r.path.startsWith(pathPrefix)).json;

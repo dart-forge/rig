@@ -31,6 +31,14 @@ final class FakeDockerEngine implements DockerEngine {
   bool pullSucceeds = true;
   String pullFailureDetail = 'manifest unknown';
 
+  /// When false, [buildImage] throws [ImageBuildFailed].
+  bool buildSucceeds = true;
+  String buildFailureDetail = 'RUN exit 1';
+
+  /// The arguments of the last [buildImage] call, for assertions.
+  ContainerBuild? lastBuild;
+  String? lastBuildTag;
+
   /// When set, [removeContainer] throws it instead of removing anything.
   Object? removeError;
 
@@ -143,6 +151,17 @@ final class FakeDockerEngine implements DockerEngine {
       throw ImagePullFailed(image: image, detail: pullFailureDetail);
     }
     images.add(image);
+  }
+
+  @override
+  Future<void> buildImage(ContainerBuild build, String tag) async {
+    calls.add('build:$tag');
+    lastBuild = build;
+    lastBuildTag = tag;
+    if (!buildSucceeds) {
+      throw ImageBuildFailed(tag: tag, detail: buildFailureDetail);
+    }
+    images.add(tag);
   }
 
   @override

@@ -9,6 +9,7 @@ import 'api_parse.dart';
 import 'docker_engine.dart';
 import 'image_ref.dart';
 import 'log_frames.dart';
+import 'tar.dart';
 
 /// Talks to a Docker daemon over its unix domain socket.
 ///
@@ -23,6 +24,7 @@ final class HttpDockerEngine implements DockerEngine {
     required String socketPath,
     this.requestTimeout = const Duration(seconds: 30),
     this.pullTimeout = const Duration(seconds: 300),
+    this.buildTimeout = const Duration(seconds: 300),
   }) : _socketPath = socketPath,
        _client = HttpClient() {
     _client.connectionFactory = (uri, proxyHost, proxyPort) =>
@@ -45,6 +47,12 @@ final class HttpDockerEngine implements DockerEngine {
   /// A pull needs its own, much longer budget: a cold pull of a real image
   /// routinely takes minutes, not seconds.
   final Duration pullTimeout;
+
+  /// A build needs the same kind of budget as a pull, for the same reason:
+  /// a cold build (base image included) can take minutes. An unchanged
+  /// context rebuilds in tens of milliseconds thanks to layer caching, so
+  /// this is a ceiling for the worst case, not the common one.
+  final Duration buildTimeout;
 
   final String _socketPath;
   final HttpClient _client;
@@ -468,6 +476,138 @@ final class HttpDockerEngine implements DockerEngine {
       }
     }
     return null;
+  }
+
+  @override
+  Future<void> buildImage(ContainerBuild build, String tag) async {
+    final tar = buildContextTar(Directory(build.context));
+    final query = {
+      't': tag,
+      'dockerfile': build.dockerfile,
+      if (build.args.isNotEmpty) 'buildargs': jsonEncode(build.args),
+    };
+
+    final _EngineResponse res;
+    try {
+      res = await _sendBytes(
+        'POST',
+        '/build?${_query(query)}',
+        bytes: tar,
+        contentType: 'application/x-tar',
+        timeout: buildTimeout,
+      );
+    } on EngineError catch (e) {
+      // Only reachable via the timeout below: same reasoning as pullImage's
+      // own catch of the same thing.
+      throw ImageBuildFailed(tag: tag, detail: e.body);
+    }
+
+    if (res.statusCode >= 400) {
+      throw ImageBuildFailed(tag: tag, detail: res.text);
+    }
+
+    // Docker answers 200 and then reports failure inside the build's
+    // progress stream, so the body has to be read even on success — the
+    // exact trap pullImage already avoids, and for the same reason.
+    final failure = _buildFailure(res.text);
+    if (failure != null) {
+      throw ImageBuildFailed(tag: tag, detail: failure);
+    }
+  }
+
+  /// Reads a build's progress stream, returning null on success.
+  ///
+  /// On failure, the result carries both the error Docker reported and the
+  /// `stream` output that led up to it — the output is what tells a caller
+  /// which `RUN` step actually failed, not just that the build did.
+  static String? _buildFailure(String body) {
+    final output = StringBuffer();
+    String? error;
+
+    for (final line in body.split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      Object? decoded;
+      try {
+        decoded = jsonDecode(trimmed);
+      } on FormatException {
+        continue;
+      }
+      if (decoded is! Map) continue;
+
+      final stream = decoded['stream'];
+      if (stream != null) output.write(stream);
+
+      error ??= _errorIn(decoded);
+    }
+
+    if (error == null) return null;
+    if (output.isEmpty) return error;
+    return '$error\n\nBuild output:\n$output';
+  }
+
+  static String? _errorIn(Map<Object?, Object?> decoded) {
+    final direct = decoded['error'];
+    if (direct != null) return direct.toString();
+
+    final detail = decoded['errorDetail'];
+    if (detail is Map && detail['message'] != null) {
+      return detail['message'].toString();
+    }
+
+    // A plain top-level `message` is how a build request Docker rejects
+    // outright (a bad `dockerfile` query param, say) reports itself, distinct
+    // from `error`/`errorDetail`, which come from inside the build itself.
+    final message = decoded['message'];
+    return message?.toString();
+  }
+
+  Future<_EngineResponse> _sendBytes(
+    String method,
+    String path, {
+    required List<int> bytes,
+    required String contentType,
+    Duration? timeout,
+  }) async {
+    final budget = timeout ?? requestTimeout;
+    final fullPath = '/$apiVersion$path';
+    try {
+      return await _sendBytesOnce(
+        method,
+        fullPath,
+        bytes,
+        contentType,
+      ).timeout(budget);
+    } on TimeoutException {
+      throw EngineError(
+        method: method,
+        path: fullPath,
+        statusCode: 0,
+        body: 'Docker did not respond within ${_formatDuration(budget)}',
+      );
+    }
+  }
+
+  Future<_EngineResponse> _sendBytesOnce(
+    String method,
+    String fullPath,
+    List<int> bytes,
+    String contentType,
+  ) async {
+    final uri = Uri.parse('http://localhost$fullPath');
+    final request = await _client.openUrl(method, uri);
+    request.headers.set(HttpHeaders.contentTypeHeader, contentType);
+    request.headers.contentLength = bytes.length;
+    request.add(bytes);
+    final response = await request.close();
+    final out = <int>[];
+    await response.forEach(out.addAll);
+    return _EngineResponse(
+      statusCode: response.statusCode,
+      bytes: out,
+      method: method,
+      path: fullPath,
+    );
   }
 
   static String _query(Map<String, String> params) => params.entries

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
+import '../engine/tar.dart';
 import 'container_spec.dart';
 
 /// Mounted files up to this size are hashed by content; larger ones by size
@@ -28,6 +29,7 @@ String specHash(
   final lines = [
     ...normalizeSpec(spec).canonicalLines,
     ..._mountContentLines(spec, maxMountBytes),
+    ..._buildContextLines(spec.build, maxMountBytes),
   ];
   final digest = sha256.convert(utf8.encode(_unambiguous(lines)));
   return digest.toString().substring(0, 16);
@@ -73,6 +75,33 @@ String _digestOf(String hostPath, int maxBytes) {
   // Do not silently treat a missing source as "no content": if it appears
   // later, that is a different container.
   return 'absent';
+}
+
+/// Folds a build context in by content, the same reason and the same way
+/// [_mountContentLines] folds a mount in: a spec that keeps building under
+/// the same tag but with different Dockerfile input must stop matching a
+/// container built from the old one.
+///
+/// Files are read through [listBuildContext], which validates the context
+/// (rejects `.dockerignore`, symlinks, and paths ustar cannot represent) as
+/// a side effect — so a spec with a broken build context fails to hash, not
+/// just fails to build. Sorted already by that call; each file's mode is
+/// included alongside its content because an executable bit is exactly the
+/// kind of change that must not be silently absorbed into "same container".
+List<String> _buildContextLines(ContainerBuild? build, int maxBytes) {
+  if (build == null) return const [];
+
+  final sortedArgKeys = build.args.keys.toList()..sort();
+  final files = listBuildContext(Directory(build.context))
+      .where((e) => !e.isDirectory);
+
+  return [
+    'build.dockerfile=${build.dockerfile}',
+    for (final key in sortedArgKeys) 'build.arg=$key=${build.args[key]}',
+    for (final file in files)
+      'build.file=${file.relativePath}='
+          'mode:${file.mode}:${_fileDigest(file.source!, maxBytes)}',
+  ];
 }
 
 String _fileDigest(File file, int maxBytes) {

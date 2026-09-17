@@ -340,6 +340,26 @@ void main() {
       expect(spec.networkMode, 'host');
     });
 
+    test('marks a build spec as distinct from a pull spec with the same '
+        'image name', () {
+      const pulled = ContainerSpec(
+        image: 'app:local',
+        waitFor: WaitFor.healthy(),
+      );
+      final built = ContainerSpec(
+        image: 'app:local',
+        waitFor: const WaitFor.healthy(),
+        // The context need not exist: normalizeSpec only records that a
+        // build is present, not its content — specHash reads the context.
+        build: const ContainerBuild(context: '/does/not/exist'),
+      );
+
+      expect(
+        normalizeSpec(pulled).canonicalLines,
+        isNot(normalizeSpec(built).canonicalLines),
+      );
+    });
+
     test('canonical lines are stable across calls', () {
       const spec = ContainerSpec(
         image: 'postgres:16-alpine',

@@ -313,4 +313,41 @@ void main() {
       expect(await engine.removeNetwork('no-such-net'), isTrue);
     });
   });
+
+  group('buildImage', () {
+    const build = ContainerBuild(context: '/some/context');
+
+    test(
+      'records the tag and arguments, and tags the image as present',
+      () async {
+        await engine.buildImage(build, 'app:local');
+
+        expect(engine.calls, ['build:app:local']);
+        expect(engine.lastBuild, same(build));
+        expect(engine.lastBuildTag, 'app:local');
+        expect(await engine.imageExists('app:local'), isTrue);
+      },
+    );
+
+    test('throws ImageBuildFailed when buildSucceeds is false', () async {
+      engine.buildSucceeds = false;
+      engine.buildFailureDetail = 'RUN exit 1';
+
+      await expectLater(
+        engine.buildImage(build, 'app:local'),
+        throwsA(
+          isA<ImageBuildFailed>().having(
+            (e) => e.detail,
+            'detail',
+            'RUN exit 1',
+          ),
+        ),
+      );
+      expect(
+        await engine.imageExists('app:local'),
+        isFalse,
+        reason: 'a failed build must not report the tag as present',
+      );
+    });
+  });
 }

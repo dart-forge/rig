@@ -267,4 +267,129 @@ void main() {
       expect(specHash(one), specHash(two));
     });
   });
+
+  group('build', () {
+    ContainerSpec specWithContext(Directory dir, {Map<String, String>? args}) =>
+        ContainerSpec(
+          image: 'app:local',
+          waitFor: const WaitFor.healthy(),
+          build: ContainerBuild(context: dir.path, args: args ?? const {}),
+        );
+
+    test('changes when a file in the build context changes', () {
+      final file = writeFile('app.txt', 'FIRST');
+      final spec = specWithContext(tmp);
+
+      final before = specHash(spec);
+      file.writeAsStringSync('SECOND');
+
+      expect(specHash(spec), isNot(before));
+    });
+
+    test('is the same for identical content at a different context path', () {
+      final a = Directory(p.join(tmp.path, 'a'))..createSync();
+      final b = Directory(p.join(tmp.path, 'b'))..createSync();
+      File(p.join(a.path, 'app.txt')).writeAsStringSync('SAME');
+      File(p.join(b.path, 'app.txt')).writeAsStringSync('SAME');
+
+      expect(
+        specHash(specWithContext(a)),
+        specHash(specWithContext(b)),
+        reason: 'what the daemon builds from is the content, not the path',
+      );
+    });
+
+    test('does not depend on the order files are listed in', () {
+      final a = Directory(p.join(tmp.path, 'a'))..createSync();
+      File(p.join(a.path, 'z.txt')).writeAsStringSync('Z');
+      File(p.join(a.path, 'a.txt')).writeAsStringSync('A');
+
+      final b = Directory(p.join(tmp.path, 'b'))..createSync();
+      File(p.join(b.path, 'a.txt')).writeAsStringSync('A');
+      File(p.join(b.path, 'z.txt')).writeAsStringSync('Z');
+
+      expect(specHash(specWithContext(a)), specHash(specWithContext(b)));
+    });
+
+    test('changes when a file executable bit changes, content unchanged', () {
+      final file = writeFile('run.sh', '#!/bin/sh\necho hi\n');
+      Process.runSync('chmod', ['644', file.path]);
+      final spec = specWithContext(tmp);
+
+      final before = specHash(spec);
+      Process.runSync('chmod', ['755', file.path]);
+
+      expect(specHash(spec), isNot(before));
+    });
+
+    test('changes when the dockerfile name changes', () {
+      writeFile('a.txt', 'x');
+      const a = ContainerSpec(image: 'app:local', waitFor: WaitFor.healthy());
+
+      final withBuild = ContainerSpec(
+        image: 'app:local',
+        waitFor: const WaitFor.healthy(),
+        build: ContainerBuild(context: tmp.path, dockerfile: 'A.Dockerfile'),
+      );
+      final otherDockerfile = ContainerSpec(
+        image: 'app:local',
+        waitFor: const WaitFor.healthy(),
+        build: ContainerBuild(context: tmp.path, dockerfile: 'B.Dockerfile'),
+      );
+
+      expect(specHash(withBuild), isNot(specHash(otherDockerfile)));
+      expect(specHash(withBuild), isNot(specHash(a)));
+    });
+
+    test('changes when build args change', () {
+      writeFile('a.txt', 'x');
+
+      final a = specWithContext(tmp, args: {'VERSION': '1'});
+      final b = specWithContext(tmp, args: {'VERSION': '2'});
+
+      expect(specHash(a), isNot(specHash(b)));
+    });
+
+    test('ignores the declaration order of build args', () {
+      writeFile('a.txt', 'x');
+
+      final a = specWithContext(tmp, args: {'A': '1', 'B': '2'});
+      final b = specWithContext(tmp, args: {'B': '2', 'A': '1'});
+
+      expect(specHash(a), specHash(b));
+    });
+
+    test('a build spec hashes differently from a pull spec with the same '
+        'image name', () {
+      writeFile('a.txt', 'x');
+
+      const pulled = ContainerSpec(
+        image: 'app:local',
+        waitFor: WaitFor.healthy(),
+      );
+      final built = specWithContext(tmp);
+
+      expect(specHash(pulled), isNot(specHash(built)));
+    });
+
+    test('rejects a build context with a .dockerignore', () {
+      writeFile('.dockerignore', 'secret\n');
+      writeFile('secret', 'do not send me');
+
+      expect(
+        () => specHash(specWithContext(tmp)),
+        throwsA(isA<DockerignoreNotSupported>()),
+      );
+    });
+
+    test('rejects a symlink in the build context', () {
+      writeFile('real.txt', 'real');
+      Link(p.join(tmp.path, 'link.txt')).createSync('real.txt');
+
+      expect(
+        () => specHash(specWithContext(tmp)),
+        throwsA(isA<SymlinkInBuildContext>()),
+      );
+    });
+  });
 }

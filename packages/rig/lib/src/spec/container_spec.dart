@@ -88,6 +88,32 @@ final class ContainerNetwork {
   String get dockerName => 'rig-$name';
 }
 
+/// Build the image from a Dockerfile instead of pulling it.
+///
+/// Const-constructible for the same reason [ContainerSpec] is: rig hashes
+/// the spec, and the build context's own content — not just this value —
+/// feeds that hash, folded in the same way a [Mount]'s content is.
+final class ContainerBuild {
+  const ContainerBuild({
+    required this.context,
+    this.dockerfile = 'Dockerfile',
+    this.args = const {},
+  });
+
+  /// Directory sent to the daemon as the build context.
+  ///
+  /// Must not contain a `.dockerignore`: rig does not interpret one yet, and
+  /// sending the directory as-is would risk shipping something the author
+  /// meant to exclude.
+  final String context;
+
+  /// The Dockerfile's name, relative to [context].
+  final String dockerfile;
+
+  /// Build-time `ARG` values.
+  final Map<String, String> args;
+}
+
 /// An immutable description of a container to run.
 ///
 /// Const-constructible on purpose: rig hashes the spec to decide whether a
@@ -110,9 +136,16 @@ final class ContainerSpec {
     this.network,
     this.healthcheck,
     this.lifetime = Lifetime.shared,
+    this.build,
   });
 
   /// Image reference including the tag, e.g. `postgres:16-alpine`.
+  ///
+  /// Doubles as the tag rig gives the built image when [build] is set —
+  /// the same way `docker compose build` treats a service's `image:` as
+  /// where its build ends up. [image] stays required either way, rather
+  /// than becoming optional when [build] is present, to avoid a breaking
+  /// change to every existing spec.
   final String image;
 
   /// How rig decides the container is usable. Required: readiness is the
@@ -148,6 +181,9 @@ final class ContainerSpec {
   final Healthcheck? healthcheck;
   final Lifetime lifetime;
 
+  /// Build [image] from a Dockerfile instead of pulling it. Null means pull.
+  final ContainerBuild? build;
+
   /// A copy of this spec with the given fields replaced.
   ///
   /// [ContainerSpec] is const-constructible so it can be shared and hashed,
@@ -172,6 +208,7 @@ final class ContainerSpec {
     ContainerNetwork? network,
     Healthcheck? healthcheck,
     Lifetime? lifetime,
+    ContainerBuild? build,
   }) {
     return ContainerSpec(
       image: image ?? this.image,
@@ -190,6 +227,7 @@ final class ContainerSpec {
       network: network ?? this.network,
       healthcheck: healthcheck ?? this.healthcheck,
       lifetime: lifetime ?? this.lifetime,
+      build: build ?? this.build,
     );
   }
 }
@@ -238,6 +276,12 @@ NormalizedSpec normalizeSpec(ContainerSpec spec) {
 
   return NormalizedSpec([
     'image=${spec.image}',
+    // Marks that this spec builds its image rather than pulling it, so a
+    // spec that starts building under a tag someone else already pulled
+    // (or vice versa) is never mistaken for "same image name, same
+    // container". The build context's own content is folded into the hash
+    // separately, by specHash, the same way a mount's content is.
+    if (spec.build != null) 'build=true',
     for (final key in sortedEnv) 'env=$key=${spec.env[key]}',
     // argv order is meaningful, so these keep their order.
     for (final arg in spec.entrypoint) 'entrypoint=$arg',

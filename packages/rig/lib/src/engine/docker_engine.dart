@@ -122,6 +122,13 @@ abstract interface class DockerEngine {
   /// Throws [ImagePullFailed] on failure.
   Future<void> pullImage(String image);
 
+  /// Builds an image from [build] and tags it [tag].
+  ///
+  /// Throws [ImageBuildFailed] on failure, including a Dockerfile that built
+  /// successfully as HTTP but failed inside the build (Docker answers `POST
+  /// /build` with 200 and reports failure in the response stream).
+  Future<void> buildImage(ContainerBuild build, String tag);
+
   /// Containers matching [filters], in Docker's filter form:
   /// `{'label': ['dev.dart-forge.rig=1'], 'status': ['running']}`.
   Future<List<ContainerSummary>> listContainers({

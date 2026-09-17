@@ -52,6 +52,17 @@ final class AcquiredContainer {
 /// so nothing is lost by asking before knowing whether this call will end up
 /// reusing a container instead of creating one.
 ///
+/// When [ContainerSpec.build] is set, building the image replaces pulling it
+/// — never both, since pulling a tag that only a local build ever produces
+/// would just fail. The build runs in this same place, before the lock, for
+/// the same reasoning as the pull it replaces: rig rebuilds on every
+/// acquire (there is no "is this the latest build" check to run), and an
+/// unchanged context only costs Docker's layer cache a lookup — tens of
+/// milliseconds — so two suites racing to build the same tag here cost a
+/// little duplicated work, not a stalled lock. A cold build, like a cold
+/// pull, can take much longer than the lock's timeouts assume, which is the
+/// failure mode keeping it out of the lock actually prevents.
+///
 /// The network, when the spec names one, is ensured here for the same
 /// reason: `ensureNetwork` is idempotent, so two suites racing to create
 /// `rig-app` at once cost an extra `POST /networks/create` that answers
@@ -73,7 +84,12 @@ Future<AcquiredContainer> acquireContainer({
   final hash = specHash(spec);
   final labels = buildRigLabels(spec: spec, hash: hash, project: project);
 
-  await _ensureImage(spec.image, engine);
+  final build = spec.build;
+  if (build != null) {
+    await engine.buildImage(build, spec.image);
+  } else {
+    await _ensureImage(spec.image, engine);
+  }
   final network = spec.network;
   if (network != null) {
     await engine.ensureNetwork(network.dockerName, buildRigNetworkLabels());

@@ -220,6 +220,71 @@ final class PortNotPublished extends RigException {
             'exposedPorts: [${[...published, containerPort].join(', ')}].';
 }
 
+/// A build context contains a `.dockerignore` file.
+///
+/// rig does not interpret `.dockerignore` yet. Sending the context anyway
+/// would silently include whatever the author meant to exclude — a secret,
+/// most obviously — which is worse than refusing outright.
+final class DockerignoreNotSupported extends RigException {
+  const DockerignoreNotSupported({required this.contextPath});
+
+  final String contextPath;
+
+  @override
+  String get message =>
+      'Found .dockerignore in $contextPath, but rig does not interpret '
+      '.dockerignore yet.\n\n'
+      'Make the build context a directory that already contains only what '
+      'should be sent to the daemon.';
+}
+
+/// A build context contains a symlink.
+///
+/// Following it could pull in something from outside the context entirely;
+/// skipping it would build a subtly different image than the one on disk.
+/// Neither is safe to guess at.
+final class SymlinkInBuildContext extends RigException {
+  const SymlinkInBuildContext({required this.path});
+
+  final String path;
+
+  @override
+  String get message =>
+      'Build context contains a symlink at $path, which rig does not '
+      'support.\n\nReplace it with a real file or directory.';
+}
+
+/// A build context path is too long for ustar to represent.
+final class BuildContextPathTooLong extends RigException {
+  const BuildContextPathTooLong({required this.path});
+
+  final String path;
+
+  @override
+  String get message =>
+      'Path is too long to put in a tar build context: $path\n\n'
+      'ustar allows at most 100 bytes for a file name and 155 for its '
+      'directory prefix. Shorten the path.';
+}
+
+/// Building an image from a Dockerfile failed.
+///
+/// Docker answers `POST /build` with 200 and reports failure inside the
+/// response stream, so this can surface long after the request looked like
+/// it succeeded. [detail] carries the build output so the caller can see
+/// which step failed, not just that one did.
+final class ImageBuildFailed extends RigException {
+  const ImageBuildFailed({required this.tag, required this.detail});
+
+  /// The tag the build was asked to produce.
+  final String tag;
+
+  final String detail;
+
+  @override
+  String get message => 'Could not build $tag:\n\n$detail';
+}
+
 /// Another holder kept the lock for the whole timeout.
 final class LockTimeout extends RigException {
   const LockTimeout({required this.lockPath, required this.waited});
