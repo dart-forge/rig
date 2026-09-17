@@ -251,6 +251,59 @@ void main() {
         completes,
       );
     });
+
+    test('does not throw, and leaves the marker for prune, when Docker itself '
+        'could not run the drop', () async {
+      // A container that vanished between the lease resolving and
+      // tearDownAll reaching psql (rig prune, a Docker restart) must not
+      // turn a passing suite red in teardown.
+      await createSuiteDatabase(
+        engine: engine,
+        containerId: containerId,
+        user: 'test',
+        adminDatabase: 'test_db',
+        database: 'test_p_x',
+        stateDir: stateDir,
+      );
+      final marker = suiteMarkerFile(
+        stateDir: stateDir,
+        containerId: containerId,
+        database: 'test_p_x',
+      );
+      expect(marker.existsSync(), isTrue);
+
+      engine.onExec = (_) => throw EngineError(
+        method: 'POST',
+        path: '/containers/$containerId/exec',
+        statusCode: 404,
+        body: 'No such container',
+      );
+
+      final lines = <String>[];
+      await runZoned(
+        () => dropSuiteDatabase(
+          engine: engine,
+          containerId: containerId,
+          user: 'test',
+          adminDatabase: 'test_db',
+          database: 'test_p_x',
+          stateDir: stateDir,
+        ),
+        zoneSpecification: ZoneSpecification(
+          print: (self, parent, zone, line) => lines.add(line),
+        ),
+      );
+
+      expect(lines, hasLength(1));
+      expect(lines.single, allOf(contains('test_p_x'), contains(containerId)));
+      expect(
+        marker.existsSync(),
+        isTrue,
+        reason:
+            'the container is gone, so nothing here can tell whether the '
+            'database went with it; rig prune reclaims this marker',
+      );
+    });
   });
 
   group('dropStaleSuiteDatabases', () {
@@ -515,6 +568,87 @@ void main() {
       expect(engine.calls.join('\n'), isNot(contains('DROP DATABASE')));
     });
 
+    test('does not report a drop that did not happen, and leaves the marker '
+        'and the database alone', () async {
+      // force: false means a backend connecting between the listing and
+      // this statement is the expected way for the drop to fail — it is
+      // exactly the protection that WITH (FORCE) being off the sweep path
+      // exists to give. The sweep must not tell the world it dropped a
+      // database that is still there.
+      final claimed = suiteDatabaseName(
+        project: 'p',
+        now: now.subtract(const Duration(hours: 3)),
+        token: 'deadbeef',
+      );
+      final marker = suiteMarkerFile(
+        stateDir: stateDir,
+        containerId: containerId,
+        database: claimed,
+      );
+      marker.parent.createSync(recursive: true);
+      marker.writeAsStringSync('');
+      marker.setLastModifiedSync(now.subtract(const Duration(hours: 25)));
+
+      engine.onExec = (command) {
+        final sql = command.last;
+        if (sql.contains('pg_database')) {
+          return ExecResult(exitCode: 0, output: '$claimed\n');
+        }
+        if (sql.contains('DROP DATABASE')) {
+          return ExecResult(
+            exitCode: 1,
+            output:
+                'ERROR: database "$claimed" is being accessed by other '
+                'users',
+          );
+        }
+        return const ExecResult(exitCode: 0, output: '');
+      };
+
+      final lines = <String>[];
+      final dropped = await runZoned(
+        () => dropStaleSuiteDatabases(
+          engine: engine,
+          containerId: containerId,
+          user: 'test',
+          adminDatabase: 'test_db',
+          now: now,
+          stateDir: stateDir,
+        ),
+        zoneSpecification: ZoneSpecification(
+          print: (self, parent, zone, line) => lines.add(line),
+        ),
+      );
+
+      expect(
+        dropped,
+        isEmpty,
+        reason: 'the drop did not succeed, so nothing was actually dropped',
+      );
+      expect(
+        lines.any((l) => l.contains('dropped')),
+        isFalse,
+        reason: 'must not claim a drop that did not happen',
+      );
+      expect(
+        lines.any(
+          (l) =>
+              l.contains(claimed) &&
+              l.contains('skipped') &&
+              l.contains('accessed by other users'),
+        ),
+        isTrue,
+        reason:
+            'must name the database, say it was skipped, and say why psql '
+            'reported',
+      );
+      expect(
+        marker.existsSync(),
+        isTrue,
+        reason: 'a marker for a database that was not dropped must stay',
+      );
+    });
+
     test(
       'does nothing when the query fails, but says which container',
       () async {
@@ -541,6 +675,100 @@ void main() {
         expect(lines.single, contains(containerId));
       },
     );
+
+    test('catches the engine failing to run the listing, and says so, rather '
+        'than throwing', () async {
+      // engine.exec raises EngineError for any Docker status >= 400 — a
+      // container removed by `rig prune` or a Docker restart between the
+      // lease resolving and this running is reachable, and a broken sweep
+      // must not fail the suite that happens to trigger it.
+      engine.onExec = (_) => throw EngineError(
+        method: 'POST',
+        path: '/containers/$containerId/exec',
+        statusCode: 404,
+        body: 'No such container',
+      );
+
+      final lines = <String>[];
+      final dropped = await runZoned(
+        () => dropStaleSuiteDatabases(
+          engine: engine,
+          containerId: containerId,
+          user: 'test',
+          adminDatabase: 'test_db',
+          now: now,
+          stateDir: stateDir,
+        ),
+        zoneSpecification: ZoneSpecification(
+          print: (self, parent, zone, line) => lines.add(line),
+        ),
+      );
+
+      expect(dropped, isEmpty);
+      expect(lines, hasLength(1));
+      expect(lines.single, contains(containerId));
+    });
+
+    test(
+      'a bug in this file is not swallowed the way an engine failure is',
+      () async {
+        // Catching Object here would also catch this file's own mistakes,
+        // which is not what the sweep being forgiving is for.
+        engine.onExec = (_) => throw StateError('not an engine failure');
+
+        await expectLater(
+          dropStaleSuiteDatabases(
+            engine: engine,
+            containerId: containerId,
+            user: 'test',
+            adminDatabase: 'test_db',
+            now: now,
+            stateDir: stateDir,
+          ),
+          throwsA(isA<StateError>()),
+        );
+      },
+    );
+
+    test('returns what it already dropped when the engine fails partway '
+        'through the sweep', () async {
+      final first = suiteDatabaseName(
+        project: 'p',
+        now: now.subtract(const Duration(hours: 3)),
+        token: 'aaaaaaaa',
+      );
+      final second = suiteDatabaseName(
+        project: 'p',
+        now: now.subtract(const Duration(hours: 3)),
+        token: 'bbbbbbbb',
+      );
+      engine.onExec = (command) {
+        final sql = command.last;
+        if (sql.contains('pg_database')) {
+          return ExecResult(exitCode: 0, output: '$first\n$second\n');
+        }
+        if (sql.contains('DROP DATABASE IF EXISTS $first')) {
+          return const ExecResult(exitCode: 0, output: '');
+        }
+        throw EngineError(
+          method: 'POST',
+          path: '/containers/$containerId/exec',
+          statusCode: 404,
+          body: 'No such container',
+        );
+      };
+
+      final dropped = await dropStaleSuiteDatabases(
+        engine: engine,
+        containerId: containerId,
+        user: 'test',
+        adminDatabase: 'test_db',
+        now: now,
+        stateDir: stateDir,
+      );
+
+      expect(dropped, [first]);
+    });
 
     test('says which database it dropped and from which container', () async {
       final old = suiteDatabaseName(

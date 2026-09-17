@@ -152,15 +152,32 @@ Future<void> dropSuiteDatabase({
   required StateDir stateDir,
   bool force = true,
 }) async {
-  // No throw on failure: teardown also runs after a failure, and a database
-  // that is already gone is the state teardown was asking for.
-  await _psql(
-    engine,
-    containerId,
-    user,
-    adminDatabase,
-    'DROP DATABASE IF EXISTS $database${force ? ' WITH (FORCE)' : ''}',
-  );
+  // No throw on a failed DROP: teardown also runs after a failure, and a
+  // database that is already gone is the state teardown was asking for. A
+  // failure inside Docker itself — the container vanished, the daemon went
+  // away — is a different thing and is caught below instead of turning a
+  // passing suite red in tearDownAll.
+  try {
+    await _dropDatabaseSql(
+      engine,
+      containerId,
+      user,
+      adminDatabase,
+      database,
+      force,
+    );
+  } on EngineError catch (e) {
+    // ignore: avoid_print
+    print(
+      'rig_postgres: could not drop suite database $database in container '
+      '$containerId because Docker could not run the command: $e',
+    );
+    // The container is gone, so nothing here can tell whether its database
+    // went with it. Leaving the marker in place is deliberate: rig prune
+    // reclaims a marker directory once its container is no longer known to
+    // the daemon.
+    return;
+  }
 
   final marker = suiteMarkerFile(
     stateDir: stateDir,
@@ -182,9 +199,13 @@ Future<void> dropSuiteDatabase({
 /// clone of template0 sitting in a tmpfs — so a run that dies before its
 /// teardown costs memory until something clears it.
 ///
-/// Nothing here throws. A broken sweep is not worth failing a test run over;
-/// see [createSuiteDatabase] for what actually keeps a suite's own database
-/// isolated.
+/// A broken sweep is not worth failing a test run over: a failure inside
+/// Docker itself (as opposed to a failed SQL statement, which is a normal
+/// outcome here) is caught, printed, and answered with whatever this had
+/// already dropped. What actually keeps a suite's own database isolated is
+/// [createSuiteDatabase], whether or not this ever runs. Catching only the
+/// engine's own failure type, not [Object], means a bug in this file still
+/// reaches the developer instead of being swallowed the same way.
 Future<List<String>> dropStaleSuiteDatabases({
   required DockerEngine engine,
   required String containerId,
@@ -195,22 +216,30 @@ Future<List<String>> dropStaleSuiteDatabases({
   Duration staleAfter = defaultStaleAfter,
   Duration markerStaleAfter = defaultMarkerStaleAfter,
 }) async {
+  final dropped = <String>[];
+
   // Age alone is not evidence: a suite holding a lease may simply be between
   // connections. Neither is "nobody connected" alone, for the same reason.
   // What actually distinguishes a live suite is the marker
   // createSuiteDatabase writes and dropSuiteDatabase removes — the
   // filesystem is the one channel every isolate in a `dart test` run can
   // see, unlike anything held in memory.
-  final listing = await _psql(
-    engine,
-    containerId,
-    user,
-    adminDatabase,
-    "SELECT d.datname FROM pg_database d "
-    "WHERE d.datname LIKE 'test\\_%' "
-    "AND NOT EXISTS (SELECT 1 FROM pg_stat_activity a "
-    "WHERE a.datname = d.datname)",
-  );
+  ExecResult listing;
+  try {
+    listing = await _psql(
+      engine,
+      containerId,
+      user,
+      adminDatabase,
+      "SELECT d.datname FROM pg_database d "
+      "WHERE d.datname LIKE 'test\\_%' "
+      "AND NOT EXISTS (SELECT 1 FROM pg_stat_activity a "
+      "WHERE a.datname = d.datname)",
+    );
+  } on EngineError catch (e) {
+    _printCouldNotSweep(containerId, e);
+    return dropped;
+  }
   if (listing.exitCode != 0) {
     // A shared container's data directory is a tmpfs. A sweep that silently
     // never runs lets suite databases accumulate in RAM until the container
@@ -222,11 +251,10 @@ Future<List<String>> dropStaleSuiteDatabases({
       'rig_postgres: could not list suite databases in container '
       '$containerId to sweep them: ${listing.output}',
     );
-    return const [];
+    return dropped;
   }
 
   final cutoff = now.toUtc().subtract(staleAfter);
-  final dropped = <String>[];
 
   for (final name in listing.output.split('\n')) {
     final candidate = name.trim();
@@ -266,15 +294,48 @@ Future<List<String>> dropStaleSuiteDatabases({
       if (markerAge <= markerStaleAfter) continue;
     }
 
-    await dropSuiteDatabase(
-      engine: engine,
-      containerId: containerId,
-      user: user,
-      adminDatabase: adminDatabase,
-      database: candidate,
-      stateDir: stateDir,
-      force: false,
-    );
+    // force: false, same as dropSuiteDatabase's own sweep-driven call below
+    // would use — forcing here would remove the very protection the "nobody
+    // connected" check exists to give a live suite between connections. That
+    // is exactly why this DROP can fail as a normal outcome (a backend
+    // connected between the listing above and this statement), which is why
+    // the result is inspected directly here rather than through
+    // dropSuiteDatabase, whose whole contract for teardown is to not do
+    // that.
+    ExecResult dropResult;
+    try {
+      dropResult = await _dropDatabaseSql(
+        engine,
+        containerId,
+        user,
+        adminDatabase,
+        candidate,
+        false,
+      );
+    } on EngineError catch (e) {
+      _printCouldNotSweep(containerId, e);
+      return dropped;
+    }
+
+    if (dropResult.exitCode != 0) {
+      // Nothing was actually dropped, so the database is still there and its
+      // marker (if any) must stay — reporting either otherwise would be
+      // printing the opposite of what happened.
+      // ignore: avoid_print
+      print(
+        'rig_postgres: skipped stale suite database $candidate in '
+        'container $containerId because the drop did not succeed: '
+        '${dropResult.output}',
+      );
+      continue;
+    }
+
+    try {
+      if (marker.existsSync()) marker.deleteSync();
+    } on FileSystemException {
+      // Nothing to undo if it cannot be removed.
+    }
+
     dropped.add(candidate);
     // ignore: avoid_print
     print(
@@ -283,6 +344,14 @@ Future<List<String>> dropStaleSuiteDatabases({
     );
   }
   return dropped;
+}
+
+void _printCouldNotSweep(String containerId, EngineError e) {
+  // ignore: avoid_print
+  print(
+    'rig_postgres: could not sweep stale suite databases in container '
+    '$containerId because Docker could not run the command: $e',
+  );
 }
 
 /// The minute stamp out of a name this module produced, or null when the name
@@ -307,3 +376,22 @@ Future<ExecResult> _psql(
   String sql,
 ) =>
     engine.exec(containerId, ['psql', '-U', user, '-d', database, '-tAc', sql]);
+
+/// Runs the DROP itself and hands back what psql said, without deciding what
+/// that means — [dropSuiteDatabase] ignores it (teardown's job), and
+/// [dropStaleSuiteDatabases] inspects it directly (the sweep's job), and
+/// each needs to keep doing only that.
+Future<ExecResult> _dropDatabaseSql(
+  DockerEngine engine,
+  String containerId,
+  String user,
+  String adminDatabase,
+  String database,
+  bool force,
+) => _psql(
+  engine,
+  containerId,
+  user,
+  adminDatabase,
+  'DROP DATABASE IF EXISTS $database${force ? ' WITH (FORCE)' : ''}',
+);
