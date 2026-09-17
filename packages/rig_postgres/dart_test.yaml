@@ -1,0 +1,4 @@
+tags:
+  integration:
+    # Needs a running Docker daemon, and pulling Postgres can be slow.
+    timeout: 5x
