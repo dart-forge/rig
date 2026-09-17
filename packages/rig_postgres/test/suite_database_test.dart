@@ -175,21 +175,22 @@ void main() {
 
   group('dropStaleSuiteDatabases', () {
     test('drops only what is old and unused', () async {
-      // Real wall-clock time, not the fixed `now` used elsewhere in this
-      // file: dropStaleSuiteDatabases also refuses to touch anything this
-      // process could have created, judged against the real clock, so `old`
-      // has to be genuinely in the past for that guard to let it through.
-      final reference = DateTime.now();
       // Tokens are hex because that is what newSuiteToken produces, and the
       // parser only accepts names this module could have written.
+      //
+      // Both were made before this notional process started, so the process
+      // bound lets them through and the age comparison is what separates
+      // them. Arranged that way on purpose: if `fresh` were newer than the
+      // process it would be spared by the wrong guard and the test would
+      // still pass.
       final old = suiteDatabaseName(
         project: 'p',
-        now: reference.subtract(const Duration(hours: 3)),
+        now: now.subtract(const Duration(hours: 3)),
         token: 'deadbeef',
       );
       final fresh = suiteDatabaseName(
         project: 'p',
-        now: reference,
+        now: now.subtract(const Duration(minutes: 5)),
         token: 'cafebabe',
       );
       engine.onExec = (command) {
@@ -205,7 +206,8 @@ void main() {
         containerId: containerId,
         user: 'test',
         adminDatabase: 'test_db',
-        now: reference,
+        now: now,
+        processStartedAt: now.subtract(const Duration(seconds: 30)),
       );
 
       expect(dropped, [old]);
@@ -278,11 +280,7 @@ void main() {
       // A suite running alongside this one is between connections as often as
       // not, so no query can distinguish it from an abandoned database. Being
       // in the same process can.
-      final mine = suiteDatabaseName(
-        project: 'p',
-        now: DateTime.now(),
-        token: 'aaaabbbb',
-      );
+      final mine = suiteDatabaseName(project: 'p', now: now, token: 'aaaabbbb');
       engine.onExec = (command) => command.last.contains('pg_database')
           ? ExecResult(exitCode: 0, output: '$mine\n')
           : const ExecResult(exitCode: 0, output: '');
@@ -292,9 +290,11 @@ void main() {
         containerId: containerId,
         user: 'test',
         adminDatabase: 'test_db',
-        // Far in the future with a tiny threshold: age alone would condemn it.
-        now: DateTime.now().add(const Duration(days: 1)),
+        // Judged far in the future with a tiny threshold, so age alone would
+        // condemn it. Only the process bound saves it.
+        now: now.add(const Duration(days: 1)),
         staleAfter: const Duration(seconds: 1),
+        processStartedAt: now.subtract(const Duration(minutes: 1)),
       );
 
       expect(dropped, isEmpty);

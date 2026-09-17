@@ -13,7 +13,7 @@ const Duration defaultStaleAfter = Duration(hours: 1);
 
 final Random _tokens = Random();
 
-/// When this process started.
+/// When this process started, for callers that do not supply a bound.
 ///
 /// Nothing this process created can be older than this, which is what makes
 /// the sweep structurally unable to touch a database belonging to a suite
@@ -127,7 +127,14 @@ Future<List<String>> dropStaleSuiteDatabases({
   required String adminDatabase,
   required DateTime now,
   Duration staleAfter = defaultStaleAfter,
+  DateTime? processStartedAt,
 }) async {
+  // Both ends of the comparison are injectable. Taking `now` from the caller
+  // and the process bound from the real clock would tie every test with a
+  // frozen clock to wall-clock time, which is how a test of a destructive
+  // operation becomes flaky.
+  final startedAt = processStartedAt ?? _processStartedAt;
+
   // Age alone is not evidence: a suite holding a lease may simply be between
   // connections. Both conditions have to hold.
   final listing = await _psql(
@@ -163,7 +170,7 @@ Future<List<String>> dropStaleSuiteDatabases({
     // Never a database this process could have created. Suites in this run
     // share the process, so this rules them out by construction instead of
     // relying on the age margin being generous enough.
-    if (!createdNoLaterThan.isBefore(_processStartedAt)) continue;
+    if (!createdNoLaterThan.isBefore(startedAt)) continue;
 
     await dropSuiteDatabase(
       engine: engine,
