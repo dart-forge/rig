@@ -372,14 +372,38 @@ void main() {
       expect(specHash(pulled), isNot(specHash(built)));
     });
 
-    test('rejects a build context with a .dockerignore', () {
-      writeFile('.dockerignore', 'secret\n');
+    test('changes when .dockerignore starts excluding another file', () {
+      final dockerignore = writeFile('.dockerignore', '# nothing excluded\n');
       writeFile('secret', 'do not send me');
+      final spec = specWithContext(tmp);
+
+      final before = specHash(spec);
+      dockerignore.writeAsStringSync('secret\n');
 
       expect(
-        () => specHash(specWithContext(tmp)),
-        throwsA(isA<DockerignoreNotSupported>()),
+        specHash(spec),
+        isNot(before),
+        reason:
+            'secret now stays out of the tar entirely, so the set of files '
+            'folded into the hash has changed even though no file that is '
+            'still included changed',
       );
+    });
+
+    test('does not change when .dockerignore is rewritten without changing '
+        'what it excludes', () {
+      final dockerignore = writeFile('.dockerignore', 'secret\n');
+      writeFile('secret', 'do not send me');
+      writeFile('app.txt', 'included');
+      final spec = specWithContext(tmp);
+
+      final before = specHash(spec);
+      // Adds a comment and reorders nothing about what is excluded: the
+      // set of files the daemon would actually receive is unchanged, so
+      // the image would be identical, so the hash must not move either.
+      dockerignore.writeAsStringSync('# still just secret\nsecret\n');
+
+      expect(specHash(spec), before);
     });
 
     test('rejects a symlink in the build context', () {

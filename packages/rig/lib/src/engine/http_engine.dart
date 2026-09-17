@@ -530,7 +530,10 @@ final class HttpDockerEngine implements DockerEngine {
 
   @override
   Future<void> buildImage(ContainerBuild build, String tag) async {
-    final tar = buildContextTar(Directory(build.context));
+    final tar = buildContextTar(
+      Directory(build.context),
+      dockerfile: build.dockerfile,
+    );
     final query = {
       't': tag,
       'dockerfile': build.dockerfile,

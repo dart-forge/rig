@@ -25,3 +25,8 @@ First release.
   and no dependency beyond `crypto`, `meta`, `path` and `test`.
 - Containers are deliberately left running between runs. `rig_cli` provides
   the `rig` command to list and remove them.
+- `ContainerBuild.context` may contain a `.dockerignore`; rig interprets it
+  client-side before sending the build context, since the daemon does not.
+  The file named by `ContainerBuild.dockerfile` is always sent even if
+  `.dockerignore` excludes it. A pattern rig cannot interpret (currently a
+  character class such as `[a-z]`) throws rather than being sent anyway.

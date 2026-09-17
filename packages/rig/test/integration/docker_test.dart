@@ -721,5 +721,50 @@ RUN /probe.sh
         isTrue,
       );
     }, timeout: const Timeout(Duration(minutes: 3)));
+
+    test('.dockerignore keeps an excluded file out of the built image while a '
+        'non-excluded one still gets in — checked from inside the running '
+        'container, not just by inspecting the tar rig sent', () async {
+      final tag = 'rig-build-dockerignore-test:$runId';
+      addTearDown(() => removeImageTag(tag));
+      File(p.join(contextDir.path, '.dockerignore'))
+          .writeAsStringSync('secret.txt\n');
+      File(p.join(contextDir.path, 'secret.txt'))
+          .writeAsStringSync('do not tell docker, marker $runId');
+      File(p.join(contextDir.path, 'kept.txt'))
+          .writeAsStringSync('safe to ship, marker $runId');
+      File(p.join(contextDir.path, 'Dockerfile')).writeAsStringSync('''
+FROM alpine:3.20
+COPY . /ctx
+''');
+
+      final acquired = await acquire(builtAlpine(tag));
+      final lease = ContainerLease.of(engine, acquired);
+
+      final listing = await lease.exec(['ls', '/ctx']);
+
+      // Printed for the record, the same way the network group above does:
+      // this is the evidence that both halves hold — not just that
+      // secret.txt is missing, but that kept.txt (and Dockerfile) actually
+      // arrived, so the context was not simply sent empty.
+      // ignore: avoid_print
+      print('ls /ctx inside the built image:\n${listing.output}');
+
+      expect(
+        listing.output,
+        isNot(contains('secret.txt')),
+        reason:
+            'the daemon does not interpret .dockerignore itself — if '
+            'this is present, rig sent it anyway',
+      );
+      expect(
+        listing.output,
+        contains('kept.txt'),
+        reason:
+            'proves the context was actually sent, not emptied — '
+            'absence of secret.txt alone would also pass against a '
+            'context that sent nothing',
+      );
+    }, timeout: const Timeout(Duration(minutes: 3)));
   });
 }

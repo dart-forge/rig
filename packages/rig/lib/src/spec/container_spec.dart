@@ -102,12 +102,18 @@ final class ContainerBuild {
 
   /// Directory sent to the daemon as the build context.
   ///
-  /// Must not contain a `.dockerignore`: rig does not interpret one yet, and
-  /// sending the directory as-is would risk shipping something the author
-  /// meant to exclude.
+  /// If it contains a `.dockerignore`, rig interprets it client-side before
+  /// sending anything — the daemon itself does not, so this is the only
+  /// place exclusion happens. A pattern rig does not understand (currently
+  /// only a character class like `[a-z]`) throws rather than being sent
+  /// anyway.
   final String context;
 
   /// The Dockerfile's name, relative to [context].
+  ///
+  /// Always sent even if `.dockerignore` excludes it — Docker itself builds
+  /// successfully in that case, so rig keeps this file in the context
+  /// regardless, rather than send a request the daemon would reject.
   final String dockerfile;
 
   /// Build-time `ARG` values.

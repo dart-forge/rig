@@ -220,22 +220,34 @@ final class PortNotPublished extends RigException {
             'exposedPorts: [${[...published, containerPort].join(', ')}].';
 }
 
-/// A build context contains a `.dockerignore` file.
+/// A `.dockerignore` line contains a pattern rig does not interpret — a
+/// character class (`[...]`) is the only one, so far.
 ///
-/// rig does not interpret `.dockerignore` yet. Sending the context anyway
-/// would silently include whatever the author meant to exclude — a secret,
-/// most obviously — which is worse than refusing outright.
-final class DockerignoreNotSupported extends RigException {
-  const DockerignoreNotSupported({required this.contextPath});
+/// The daemon does not interpret `.dockerignore` at all: excluding files is
+/// entirely the client's job, and getting it wrong does not fail the build —
+/// it ships a file the author meant to exclude inside the image. Silently
+/// skipping a pattern it cannot understand would risk exactly that, so rig
+/// throws instead of guessing.
+final class DockerignorePatternNotSupported extends RigException {
+  const DockerignorePatternNotSupported({
+    required this.line,
+    required this.pattern,
+  });
 
-  final String contextPath;
+  /// 1-based line number within the `.dockerignore` file.
+  final int line;
+
+  /// The pattern text on that line, after stripping a leading `!` — what
+  /// could not be understood, not the whole line.
+  final String pattern;
 
   @override
   String get message =>
-      'Found .dockerignore in $contextPath, but rig does not interpret '
-      '.dockerignore yet.\n\n'
-      'Make the build context a directory that already contains only what '
-      'should be sent to the daemon.';
+      'Could not interpret .dockerignore line $line: "$pattern"\n\n'
+      'rig only understands literal path segments, `*`, `?`, `**`, and `!` '
+      'negation. Character classes like `[a-z]` are not supported. When in '
+      'doubt, rig refuses rather than risk sending a file you meant to '
+      'exclude.';
 }
 
 /// A build context contains a symlink.

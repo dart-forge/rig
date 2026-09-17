@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:path/path.dart' as p;
 
 import '../errors.dart';
+import 'dockerignore.dart';
 
 /// A validated entry of a Docker build context: a regular file or a
 /// directory, never a symlink, with a path short enough for ustar.
@@ -40,23 +41,39 @@ final class ContextEntry {
 const int _maxUstarPathBytes = 255;
 
 /// Lists the files and directories a build context would send to the
-/// daemon, validating as it goes.
+/// daemon, validating and `.dockerignore`-filtering as it goes.
 ///
 /// Shared by the tar writer and `specHash`'s context digest, so the same
 /// checks run whether or not a build is actually about to happen: a spec
 /// with a bad build context should fail to hash, not just fail to build.
 ///
-/// Throws [DockerignoreNotSupported] when the context has a `.dockerignore`
-/// (rig does not interpret it, and silently sending everything anyway risks
-/// shipping something the author meant to exclude), [SymlinkInBuildContext]
-/// for any symlink (following or skipping it would both build a different
-/// image than the one on disk), and [BuildContextPathTooLong] for a path
-/// that cannot fit in ustar's `name`/`prefix` fields.
-List<ContextEntry> listBuildContext(Directory contextDir) {
-  final dockerignore = File(p.join(contextDir.path, '.dockerignore'));
-  if (dockerignore.existsSync()) {
-    throw DockerignoreNotSupported(contextPath: contextDir.path);
-  }
+/// If [contextDir] has a `.dockerignore`, every entry is checked against it
+/// (see [isExcludedByDockerignore]) and excluded ones are dropped before
+/// validation — a symlink or an over-long path inside an excluded directory
+/// must not block a build that would never have sent it anyway. [dockerfile]
+/// is the context-relative path named by `build.dockerfile`; when given, the
+/// file at that path is always kept regardless of what `.dockerignore` says,
+/// because the daemon special-cases the Dockerfile the same way and a build
+/// missing it would break outright. Pass nothing for a call that is not
+/// about a build (`ContainerLease.copyInto`'s directory case) — there is no
+/// Dockerfile to protect there.
+///
+/// Throws [DockerignorePatternNotSupported] for a `.dockerignore` line rig
+/// does not interpret, [SymlinkInBuildContext] for any symlink that survives
+/// filtering (following or skipping it would both build a different image
+/// than the one on disk), and [BuildContextPathTooLong] for a path that
+/// cannot fit in ustar's `name`/`prefix` fields.
+List<ContextEntry> listBuildContext(
+  Directory contextDir, {
+  String? dockerfile,
+}) {
+  final dockerignoreFile = File(p.join(contextDir.path, '.dockerignore'));
+  final rules = dockerignoreFile.existsSync()
+      ? parseDockerignore(dockerignoreFile.readAsStringSync())
+      : const <DockerignoreRule>[];
+  final keptPath = dockerfile == null
+      ? null
+      : normalizeContextRelativePath(dockerfile);
 
   final entries = <ContextEntry>[];
   for (final entity in contextDir.listSync(
@@ -67,6 +84,11 @@ List<ContextEntry> listBuildContext(Directory contextDir) {
         .relative(entity.path, from: contextDir.path)
         .split(Platform.pathSeparator)
         .join('/');
+
+    if (rel != keptPath && rules.isNotEmpty) {
+      final segments = rel.split('/');
+      if (isExcludedByDockerignore(segments, rules)) continue;
+    }
 
     if (entity is Link) {
       throw SymlinkInBuildContext(path: rel);
@@ -99,21 +121,32 @@ void _checkPathLength(String relativePath) {
 /// Writes [contextDir] as a minimal ustar archive, suitable for
 /// `POST /build`'s request body.
 ///
+/// [dockerfile] should be `build.dockerfile` — see [listBuildContext] for
+/// why passing it matters even when the Dockerfile happens to be excluded
+/// by `.dockerignore`.
+///
 /// Only regular files and directories are written — everything a Docker
 /// build context legitimately needs, and everything [listBuildContext]
 /// allows through. File modes are carried over from the filesystem so that
 /// an executable script an image `RUN`s stays executable.
-Uint8List buildContextTar(Directory contextDir) =>
-    _archiveFromEntries(listBuildContext(contextDir), uid: 0, gid: 0);
+Uint8List buildContextTar(Directory contextDir, {String? dockerfile}) =>
+    _archiveFromEntries(
+      listBuildContext(contextDir, dockerfile: dockerfile),
+      uid: 0,
+      gid: 0,
+    );
 
 /// Writes [hostDir]'s contents — not the directory itself — as a ustar
 /// archive, for `PUT /containers/{id}/archive` (`ContainerLease.copyInto`).
 ///
-/// Reuses [listBuildContext]'s validation (no `.dockerignore`, no symlink):
+/// Reuses [listBuildContext]'s validation (no symlink, no over-long path) —
 /// a copy-in has the same reasons to reject those that a build context
-/// does. [uid]/[gid] are written into every entry's header, which is the
-/// whole point of `copyInto` taking them — see [ContainerLease.putFile]'s
-/// doc comment for why that matters.
+/// does. No `dockerfile` is passed: this is not a build, so there is
+/// nothing to always keep, but a `.dockerignore` that happens to sit in
+/// [hostDir] is still honored the same way, rather than special-cased away.
+/// [uid]/[gid] are written into every entry's header, which is the whole
+/// point of `copyInto` taking them — see [ContainerLease.putFile]'s doc
+/// comment for why that matters.
 Uint8List directoryArchive(
   Directory hostDir, {
   required int uid,

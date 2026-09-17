@@ -83,17 +83,33 @@ String _digestOf(String hostPath, int maxBytes) {
 /// container built from the old one.
 ///
 /// Files are read through [listBuildContext], which validates the context
-/// (rejects `.dockerignore`, symlinks, and paths ustar cannot represent) as
-/// a side effect — so a spec with a broken build context fails to hash, not
-/// just fails to build. Sorted already by that call; each file's mode is
-/// included alongside its content because an executable bit is exactly the
-/// kind of change that must not be silently absorbed into "same container".
+/// (rejects symlinks and paths ustar cannot represent, and throws on a
+/// `.dockerignore` pattern it does not understand) as a side effect — so a
+/// spec with a broken build context fails to hash, not just fails to build.
+/// It also applies `.dockerignore`, so only *included* files reach this
+/// list: an excluded file never reaches the daemon, so it must not affect
+/// whether a spec still matches a running container.
+///
+/// `.dockerignore` itself is excluded from this list on purpose, even though
+/// [listBuildContext] still sends it in the tar (same as `docker build`
+/// does). Only the *set of files it causes to be included* should move the
+/// hash: rewriting which patterns are listed changes that set and the hash
+/// moves with it; rewriting the file without changing what it excludes
+/// (e.g. adding a comment) leaves the daemon building the exact same image,
+/// so hashing the ignore file's own content would move the hash for no
+/// reason a running container's identity depends on.
+///
+/// Sorted already by that call; each file's mode is included alongside its
+/// content because an executable bit is exactly the kind of change that
+/// must not be silently absorbed into "same container".
 List<String> _buildContextLines(ContainerBuild? build, int maxBytes) {
   if (build == null) return const [];
 
   final sortedArgKeys = build.args.keys.toList()..sort();
-  final files = listBuildContext(Directory(build.context))
-      .where((e) => !e.isDirectory);
+  final files = listBuildContext(
+    Directory(build.context),
+    dockerfile: build.dockerfile,
+  ).where((e) => !e.isDirectory && e.relativePath != '.dockerignore');
 
   return [
     'build.dockerfile=${build.dockerfile}',

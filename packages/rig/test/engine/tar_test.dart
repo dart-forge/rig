@@ -139,14 +139,120 @@ void main() {
       );
     });
 
-    test('rejects a .dockerignore rather than silently sending everything', () {
-      writeFile('.dockerignore', 'secret.txt\n');
-      writeFile('secret.txt', 'sh, do not tell docker');
+    test(
+      '.dockerignore keeps an excluded file out of the archive entirely',
+      () async {
+        writeFile('.dockerignore', 'secret.txt\n');
+        writeFile('secret.txt', 'sh, do not tell docker');
+        writeFile('Dockerfile', 'FROM alpine:3.20\n');
+
+        final tar = buildContextTar(tmp, dockerfile: 'Dockerfile');
+        final listing = await _listWithRealTar(tar);
+
+        expect(listing, isNot(contains('secret.txt')));
+        expect(listing, contains('Dockerfile'));
+      },
+    );
+  });
+
+  // Each of these follows the brief's semantics table: the results
+  // `docker build` itself gave for the same `.dockerignore` line, measured
+  // rather than assumed.
+  group('listBuildContext interprets .dockerignore', () {
+    test("a single '*' does not cross '/': '*.log' leaves sub/c.log alone", () {
+      writeFile('.dockerignore', '*.log\n');
+      writeFile('sub/c.log', 'not excluded');
+
+      final paths = listBuildContext(tmp).map((e) => e.relativePath).toList();
+
+      expect(paths, contains('sub/c.log'));
+    });
+
+    test('last match wins: *.log then !b.log keeps b.log', () {
+      writeFile('.dockerignore', '*.log\n!b.log\n');
+      writeFile('b.log', 'kept');
+
+      final paths = listBuildContext(tmp).map((e) => e.relativePath).toList();
+
+      expect(paths, contains('b.log'));
+    });
+
+    test('last match wins the other way too: !b.log then *.log drops b.log — '
+        'negation does not always win', () {
+      writeFile('.dockerignore', '!b.log\n*.log\n');
+      writeFile('b.log', 'dropped');
+
+      final paths = listBuildContext(tmp).map((e) => e.relativePath).toList();
+
+      expect(paths, isNot(contains('b.log')));
+    });
+
+    test('** crosses directory boundaries: **/*.log excludes every level', () {
+      writeFile('.dockerignore', '**/*.log\n');
+      writeFile('a.log', 'excluded at root');
+      writeFile('sub/c.log', 'excluded, nested');
+
+      final paths = listBuildContext(tmp).map((e) => e.relativePath).toList();
+
+      expect(paths, isNot(contains('a.log')));
+      expect(paths, isNot(contains('sub/c.log')));
+    });
+
+    test('a directory pattern excludes everything under it', () {
+      writeFile('.dockerignore', 'sub/deep\n');
+      writeFile('sub/deep/d.log', 'excluded via the directory');
+      writeFile('sub/other.txt', 'unrelated, kept');
+
+      final paths = listBuildContext(tmp).map((e) => e.relativePath).toList();
+
+      expect(paths, isNot(contains('sub/deep/d.log')));
+      expect(paths, isNot(contains('sub/deep/')));
+      expect(paths, contains('sub/other.txt'));
+    });
+
+    test('comments, blank lines, and surrounding whitespace are ignored', () {
+      writeFile('.dockerignore', '# a comment\n\n   \n  *.log  \n');
+      writeFile('a.log', 'excluded');
+      writeFile('a.txt', 'kept');
+
+      final paths = listBuildContext(tmp).map((e) => e.relativePath).toList();
+
+      expect(paths, isNot(contains('a.log')));
+      expect(paths, contains('a.txt'));
+    });
+
+    test('throws on a character class rather than guessing, naming the line '
+        'and the pattern', () {
+      writeFile('.dockerignore', 'ok.txt\n[a-z].txt\n');
 
       expect(
-        () => buildContextTar(tmp),
-        throwsA(isA<DockerignoreNotSupported>()),
+        () => listBuildContext(tmp),
+        throwsA(
+          isA<DockerignorePatternNotSupported>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('line 2'), contains('[a-z].txt')),
+          ),
+        ),
       );
+    });
+
+    test('the Dockerfile named by build.dockerfile is always kept, even when '
+        '.dockerignore excludes it', () {
+      writeFile('.dockerignore', 'Dockerfile\n');
+      writeFile('Dockerfile', 'FROM alpine:3.20\n');
+
+      final kept = listBuildContext(
+        tmp,
+        dockerfile: 'Dockerfile',
+      ).map((e) => e.relativePath).toList();
+      expect(kept, contains('Dockerfile'));
+
+      // Without naming it, the same file is excluded like anything else —
+      // proving the previous assertion is the override actually working,
+      // not .dockerignore failing to match "Dockerfile" at all.
+      final unkept = listBuildContext(tmp).map((e) => e.relativePath).toList();
+      expect(unkept, isNot(contains('Dockerfile')));
     });
   });
 

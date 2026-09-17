@@ -89,6 +89,36 @@ ignoring an exit code is a mistake this library has already made once, in a
 cleanup path that reported work it had not done. Pass `expectSuccess: false`
 where a failure is a legitimate outcome.
 
+## Building an image
+
+```dart
+final spec = ContainerSpec(
+  image: 'my-app:test', // the tag rig builds and then runs
+  build: ContainerBuild(context: 'test/fixtures/my-app'),
+  waitFor: WaitFor.port(8080),
+);
+```
+
+If the build context has a `.dockerignore`, rig interprets it before sending
+anything — the Docker daemon's own `/build` endpoint does not, so a file the
+`.dockerignore` excludes never leaves your machine. Supported: `#` comments,
+blank lines, `!` negation, `*`, `?`, and `**`. The last pattern that matches a
+given path decides its fate, so a later line can undo an earlier one and vice
+versa.
+
+**`*` does not cross `/`.** `*.log` excludes `error.log` but leaves
+`sub/error.log` alone — matching `docker build`'s own behavior, not the
+recursive glob many people expect. Write `**/*.log` to reach every directory.
+
+A pattern rig cannot interpret — currently just a character class like
+`[a-z]` — throws rather than silently sending the file anyway: getting this
+wrong ships something you meant to exclude, which is worse than refusing to
+build.
+
+`ContainerBuild.dockerfile` is always sent even if `.dockerignore` excludes
+it, the same way `docker build` itself keeps working when the Dockerfile is
+excluded.
+
 ## Requirements
 
 - Dart SDK 3.13 or newer.
