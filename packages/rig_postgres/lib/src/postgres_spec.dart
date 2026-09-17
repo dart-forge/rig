@@ -1,6 +1,7 @@
 import 'package:rig/rig.dart';
 
 import 'pg_auth.dart';
+import 'pg_tls.dart';
 
 /// The container a Postgres of this shape needs.
 ContainerSpec postgresSpec({
@@ -12,6 +13,7 @@ ContainerSpec postgresSpec({
   String password = 'test',
   String database = 'test_db',
   Lifetime lifetime = Lifetime.shared,
+  PgTlsMaterial? tlsMaterial,
 }) {
   final setup = setupFor(auth);
   final flags = [
@@ -20,30 +22,73 @@ ContainerSpec postgresSpec({
     if (verboseLogs) ..._verboseFlags,
   ];
 
+  final env = {
+    'POSTGRES_USER': user,
+    'POSTGRES_PASSWORD': password,
+    'POSTGRES_DB': database,
+    ...setup.env,
+  };
+  final healthcheck = Healthcheck(
+    // -h 127.0.0.1 is the load-bearing part. During initialisation the
+    // entrypoint runs a temporary server on the unix socket only, so a TCP
+    // probe cannot be fooled into reporting ready while that is happening.
+    test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U $user'],
+    interval: const Duration(milliseconds: 250),
+    timeout: const Duration(seconds: 3),
+    retries: 60,
+  );
+  const waitFor = WaitFor.healthy(timeout: Duration(seconds: 120));
+  // Nothing here outlives the container, and initdb is most of the startup.
+  const tmpfs = {'/var/lib/postgresql/data'};
+
+  if (tlsMaterial == null) {
+    return ContainerSpec(
+      image: 'postgres:$version',
+      env: env,
+      // `postgres` has to lead the argument list: the official entrypoint
+      // treats a command starting with a flag as arguments to its own default.
+      command: flags.isEmpty ? const [] : ['postgres', ...flags],
+      exposedPorts: const [5432],
+      tmpfs: tmpfs,
+      healthcheck: healthcheck,
+      waitFor: waitFor,
+      lifetime: lifetime,
+    );
+  }
+
+  const mountedCert = '/rig/server.crt';
+  const mountedKey = '/rig/server.key';
+  const usedCert = '/var/lib/postgresql/server.crt';
+  const usedKey = '/var/lib/postgresql/server.key';
+
+  // A bind mount arrives owned by root, and the server will not read a key it
+  // does not own — nor one that is group or world readable. Copying it inside,
+  // as root, before the entrypoint drops privileges, is what satisfies both
+  // Docker's mount semantics and Postgres's permission check.
+  final script = [
+    'install -o postgres -g postgres -m 644 $mountedCert $usedCert',
+    'install -o postgres -g postgres -m 600 $mountedKey $usedKey',
+    [
+      'exec docker-entrypoint.sh postgres',
+      ...flags,
+      '-c ssl=on',
+      '-c ssl_cert_file=$usedCert',
+      '-c ssl_key_file=$usedKey',
+    ].join(' '),
+  ].join(' && ');
+
   return ContainerSpec(
     image: 'postgres:$version',
-    env: {
-      'POSTGRES_USER': user,
-      'POSTGRES_PASSWORD': password,
-      'POSTGRES_DB': database,
-      ...setup.env,
-    },
-    // `postgres` has to lead the argument list: the official entrypoint treats
-    // a command starting with a flag as arguments to its own default.
-    command: flags.isEmpty ? const [] : ['postgres', ...flags],
+    env: env,
+    command: ['sh', '-c', script],
+    mounts: [
+      Mount(hostPath: tlsMaterial.certificate.path, containerPath: mountedCert),
+      Mount(hostPath: tlsMaterial.privateKey.path, containerPath: mountedKey),
+    ],
     exposedPorts: const [5432],
-    // Nothing here outlives the container, and initdb is most of the startup.
-    tmpfs: const {'/var/lib/postgresql/data'},
-    healthcheck: Healthcheck(
-      // -h 127.0.0.1 is the load-bearing part. During initialisation the
-      // entrypoint runs a temporary server on the unix socket only, so a TCP
-      // probe cannot be fooled into reporting ready while that is happening.
-      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U $user'],
-      interval: const Duration(milliseconds: 250),
-      timeout: const Duration(seconds: 3),
-      retries: 60,
-    ),
-    waitFor: const WaitFor.healthy(timeout: Duration(seconds: 120)),
+    tmpfs: tmpfs,
+    healthcheck: healthcheck,
+    waitFor: waitFor,
     lifetime: lifetime,
   );
 }

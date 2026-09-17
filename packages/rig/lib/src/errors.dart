@@ -1,5 +1,9 @@
-/// Everything rig throws. Sealed so a caller can switch over the cases.
-sealed class RigException implements Exception {
+/// Everything rig throws.
+///
+/// Abstract rather than sealed: packages built on top of rig (rig_postgres,
+/// for one) need to add their own exceptions without being able to touch this
+/// library.
+abstract class RigException implements Exception {
   const RigException();
 
   /// The text shown to whoever ran the test. Written to be actionable:

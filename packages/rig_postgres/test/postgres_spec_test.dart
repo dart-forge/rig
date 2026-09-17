@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:rig/engine.dart';
 import 'package:rig/rig.dart';
 import 'package:rig_postgres/rig_postgres.dart';
@@ -103,5 +105,66 @@ void main() {
       specHashOf(postgresSpec()),
       isNot(specHashOf(postgresSpec(maxConnections: 20))),
     );
+  });
+
+  group('with TLS', () {
+    final material = PgTlsMaterial(
+      certificate: File('/cache/server.crt'),
+      privateKey: File('/cache/server.key'),
+    );
+
+    test('mounts the material read-only', () {
+      final spec = postgresSpec(tlsMaterial: material);
+
+      expect(
+        spec.mounts.map((m) => m.containerPath),
+        containsAll(['/rig/server.crt', '/rig/server.key']),
+      );
+      expect(spec.mounts.every((m) => m.readOnly), isTrue);
+    });
+
+    test('copies it to a postgres-owned path before starting the server', () {
+      // A bind mount arrives owned by root, and the server refuses to read a
+      // key it does not own. Copying inside is what satisfies both Docker's
+      // mount semantics and Postgres's permission check.
+      final command = postgresSpec(tlsMaterial: material).command.join(' ');
+
+      expect(command, contains('install -o postgres -g postgres -m 600'));
+      expect(command, contains('/rig/server.key'));
+      expect(command, contains('exec docker-entrypoint.sh postgres'));
+    });
+
+    test('turns ssl on and points the server at the copies', () {
+      final command = postgresSpec(tlsMaterial: material).command.join(' ');
+
+      expect(command, contains('-c ssl=on'));
+      expect(command, contains('ssl_cert_file=/var/lib/postgresql/server.crt'));
+      expect(command, contains('ssl_key_file=/var/lib/postgresql/server.key'));
+    });
+
+    test('keeps the other server flags', () {
+      final command = postgresSpec(
+        tlsMaterial: material,
+        verboseLogs: true,
+        maxConnections: 20,
+      ).command.join(' ');
+
+      expect(command, contains('log_statement=all'));
+      expect(command, contains('max_connections=20'));
+      expect(
+        command.indexOf('exec docker-entrypoint.sh'),
+        lessThan(command.indexOf('log_statement=all')),
+        reason: 'the flags belong to the server, not to the shell wrapper',
+      );
+    });
+
+    test('the material is part of what makes the container distinct', () {
+      // Mounts are hashed by content, so a regenerated certificate must not
+      // reuse a container running the old one.
+      expect(
+        postgresSpec().command,
+        isNot(postgresSpec(tlsMaterial: material).command),
+      );
+    });
   });
 }

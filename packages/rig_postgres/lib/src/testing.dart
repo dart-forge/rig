@@ -3,6 +3,7 @@ import 'package:rig/rig.dart';
 import 'package:test/test.dart';
 
 import 'pg_auth.dart';
+import 'pg_tls.dart';
 import 'postgres_lease.dart';
 import 'postgres_spec.dart';
 import 'suite_database.dart';
@@ -33,7 +34,16 @@ PostgresLease usePostgres({
   PgIsolation isolation = PgIsolation.database,
   StateDir? stateDir,
   String? project,
+  PgTls? tls,
 }) {
+  // Resolved before the spec is built: `ensureTlsMaterial` needs to know
+  // where to cache the certificate, and `useContainer` needs a finished spec
+  // at declaration time, before any `setUpAll` exists to await anything in.
+  final resolvedStateDir = stateDir ?? StateDir.forUser();
+  final tlsMaterial = tls == null
+      ? null
+      : ensureTlsMaterial(tls, stateDir: resolvedStateDir);
+
   final spec = postgresSpec(
     version: version,
     auth: auth,
@@ -43,6 +53,7 @@ PostgresLease usePostgres({
     password: password,
     database: database,
     lifetime: lifetime,
+    tlsMaterial: tlsMaterial,
   );
 
   final container = useContainer(spec, stateDir: stateDir, project: project);
@@ -53,7 +64,6 @@ PostgresLease usePostgres({
     database: database,
   );
 
-  final resolvedStateDir = stateDir ?? StateDir.forUser();
   String? suiteDatabase;
 
   setUpAll(() async {
