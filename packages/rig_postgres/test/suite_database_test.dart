@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:rig/fake_engine.dart';
-import 'package:rig/module.dart';
 import 'package:rig/rig.dart';
 import 'package:rig_postgres/src/suite_database.dart';
 import 'package:test/test.dart';
