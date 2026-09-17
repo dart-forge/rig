@@ -1,0 +1,73 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # ubuntu only, and deliberately. GitHub's macOS runners ship no Docker, so
+    # there is no runner that exercises rig's macOS socket discovery — Docker
+    # Desktop's and colima's paths under ~/.docker/run. That gap is real and
+    # left open rather than papered over with a job that skips the tests.
+    #
+    # What this runner does give is a cold machine: no containers, no images.
+    # So every push exercises the paths a developer's machine skips by reusing
+    # what is already running — the image pull, initdb, and several suites
+    # racing to create the same container.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Dependencies
+        run: dart pub get
+
+      - name: Analyze
+        run: dart analyze --fatal-warnings .
+
+      - name: Format
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: Docker is reachable
+        # Fail here, with `docker info`'s own diagnosis, rather than inside a
+        # test's setUpAll where it reads as a test failure.
+        run: docker info
+
+      # One step per package: a failure names the package in the job's outline
+      # instead of hiding inside a loop's output. Integration suites are not
+      # skipped by default in this repo — they carry a timeout multiplier
+      # instead — so `dart test` runs everything the package has.
+      - name: Test rig
+        working-directory: packages/rig
+        run: dart test
+
+      - name: Test rig_cli
+        working-directory: packages/rig_cli
+        run: dart test
+
+      - name: Test rig_postgres
+        working-directory: packages/rig_postgres
+        run: dart test
+
+      # `dart test` only looks in test/, so the examples need naming. They run
+      # here so that an example cannot quietly stop compiling as the API moves.
+      - name: Example (rig)
+        working-directory: packages/rig
+        run: dart test example
+
+      - name: Example (rig_postgres)
+        working-directory: packages/rig_postgres
+        run: dart test example
+
+      - name: Containers left behind
+        # Not an assertion — rig leaves containers running on purpose, and on a
+        # throwaway runner that costs nothing. Printed so a failing run shows
+        # what was up when it failed.
+        if: always()
+        run: docker ps -a --filter label=dev.dart-forge.rig
