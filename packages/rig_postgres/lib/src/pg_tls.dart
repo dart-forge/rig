@@ -54,6 +54,16 @@ final class OpensslFailed extends RigException {
       'openssl could not generate a test certificate:\n$output';
 }
 
+/// [PgTls] asked for something openssl cannot turn into a valid certificate.
+final class InvalidPgTls extends RigException {
+  const InvalidPgTls({required this.detail});
+
+  final String detail;
+
+  @override
+  String get message => 'This TLS certificate cannot be generated: $detail';
+}
+
 /// The certificate and key for [tls], generating them if this machine does not
 /// have them yet.
 ///
@@ -79,6 +89,8 @@ PgTlsMaterial ensureTlsMaterial(
   required StateDir stateDir,
   ProcessResult Function(String, List<String>)? run,
 }) {
+  _validate(tls);
+
   final dir = Directory(p.join(stateDir.certsDir.path, _fingerprintOf(tls)));
   final certificate = File(p.join(dir.path, 'server.crt'));
   final privateKey = File(p.join(dir.path, 'server.key'));
@@ -144,6 +156,27 @@ PgTlsMaterial ensureTlsMaterial(
   }
 
   return PgTlsMaterial(certificate: certificate, privateKey: privateKey);
+}
+
+/// Rejects what openssl would otherwise fail on, or silently mishandle, with
+/// a message that names the actual problem rather than surfacing openssl's.
+void _validate(PgTls tls) {
+  if (tls.validFor.inDays < 1) {
+    throw InvalidPgTls(
+      detail:
+          'validFor must be at least a day (was ${tls.validFor}). '
+          'openssl -days truncates anything shorter to 0, which it refuses '
+          'to sign a certificate for.',
+    );
+  }
+  if (tls.commonName.contains('/')) {
+    throw InvalidPgTls(
+      detail:
+          "commonName must not contain '/' (was '${tls.commonName}'). "
+          "openssl's -subj takes '/' as the separator between subject "
+          'fields, so one inside the name corrupts the subject it builds.',
+    );
+  }
 }
 
 /// Everything about [tls] that changes the material it produces.

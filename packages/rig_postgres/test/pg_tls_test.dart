@@ -179,6 +179,44 @@ void main() {
     },
   );
 
+  test('rejects a validFor shorter than a day', () {
+    // openssl -days truncates a fraction of a day to 0, which it refuses to
+    // sign a certificate for — this rejects it up front with a message that
+    // names the actual problem instead.
+    expect(
+      () => ensureTlsMaterial(
+        const PgTls.selfSigned(validFor: Duration(hours: 1)),
+        stateDir: state,
+      ),
+      throwsA(
+        isA<InvalidPgTls>().having(
+          (e) => e.message,
+          'message',
+          contains('validFor'),
+        ),
+      ),
+    );
+  });
+
+  test('rejects a commonName containing a slash', () {
+    // openssl's -subj takes '/' as the field separator, so a commonName
+    // containing one corrupts the subject it builds instead of failing
+    // loudly.
+    expect(
+      () => ensureTlsMaterial(
+        const PgTls.selfSigned(commonName: 'evil/CN=other'),
+        stateDir: state,
+      ),
+      throwsA(
+        isA<InvalidPgTls>().having(
+          (e) => e.message,
+          'message',
+          contains('commonName'),
+        ),
+      ),
+    );
+  });
+
   test('does not leave half-written material behind on failure', () {
     var attempt = 0;
     ProcessResult flaky(String exe, List<String> args) {
