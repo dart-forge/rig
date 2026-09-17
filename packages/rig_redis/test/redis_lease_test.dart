@@ -1,4 +1,4 @@
-import 'package:rig/engine.dart';
+import 'package:rig/module.dart';
 import 'package:rig/fake_engine.dart';
 import 'package:rig/rig.dart';
 import 'package:rig_redis/rig_redis.dart';
