@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:rig/engine.dart';
 import 'package:rig/rig.dart';
 import 'package:rig_postgres/rig_postgres.dart';
+import 'package:rig_postgres/src/testing.dart' show confirmAuthMode;
 import 'package:test/test.dart';
 
 /// Everything this suite makes carries this, so the teardown finds it all even
@@ -46,16 +47,36 @@ void main() {
   });
 
   /// Runs SQL over TCP as the given user, which is what makes pg_hba apply.
+  ///
+  /// [host] defaults to 127.0.0.1, which is what every other caller in this
+  /// file wants — but initdb's own default pg_hba.conf always carries
+  /// `host all all 127.0.0.1/32 trust` ahead of whatever auth method this
+  /// module appends after it, so a connection to that address authenticates
+  /// as `trust` no matter which password is sent. [containerSelfIp] is the
+  /// override for a caller that needs the auth method itself enforced.
   Future<ExecResult> overTcp(
     String containerId,
     String sql, {
     String sslMode = 'prefer',
+    String password = 'test',
+    String host = '127.0.0.1',
   }) => engine.exec(containerId, [
     'psql',
-    'sslmode=$sslMode host=127.0.0.1 user=test password=test dbname=test_db',
+    'sslmode=$sslMode host=$host user=test password=$password '
+        'dbname=test_db',
     '-tAc',
     sql,
   ]);
+
+  /// The container's own address on its Docker network, as it sees itself.
+  ///
+  /// Connecting here instead of to 127.0.0.1 is what makes pg_hba's
+  /// `host all all all <method>` line the one that applies, rather than the
+  /// `trust` line initdb always writes for the loopback address.
+  Future<String> containerSelfIp(String containerId) async {
+    final result = await engine.exec(containerId, ['hostname', '-i']);
+    return result.output.trim().split(' ').first;
+  }
 
   /// Sends a Postgres SSLRequest packet over [host]:[port] and returns the
   /// single byte the server answers with: `S` if it will negotiate TLS, `N`
@@ -133,6 +154,38 @@ void main() {
             PgAuth.scram => 'scram',
             PgAuth.password => throw StateError('excluded above'),
           });
+
+          if (auth == PgAuth.scram) {
+            // The check above cannot tell "we configured this" from "we got
+            // lucky": initdb's own default is already SCRAM, so stored would
+            // read 'scram' even if confirmAuthMode had never run for this
+            // mode. Re-running the exact statements confirmAuthMode uses,
+            // with a password nothing else has ever set, and then
+            // authenticating with that new value, only succeeds if the
+            // ALTER actually executed — no default the server ships with
+            // can produce a working password it was never given. This has
+            // to go through containerSelfIp rather than the usual 127.0.0.1:
+            // a password that "works" only because pg_hba trusts the
+            // loopback address regardless would prove nothing either.
+            final selfIp = await containerSelfIp(pg.container.containerId);
+            const changed = 'confirmed-not-lucky';
+            await confirmAuthMode(
+              engine: engine,
+              containerId: pg.container.containerId,
+              auth: auth,
+              user: 'test',
+              password: changed,
+              database: 'test_db',
+            );
+
+            final withChanged = await overTcp(
+              pg.container.containerId,
+              "SELECT 'ok'",
+              password: changed,
+              host: selfIp,
+            );
+            expect(withChanged.exitCode, 0, reason: withChanged.output);
+          }
         });
       }
 
