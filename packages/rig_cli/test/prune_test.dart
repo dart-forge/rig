@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:rig/engine.dart';
 import 'package:rig/fake_engine.dart';
 import 'package:rig/rig.dart';
@@ -181,5 +182,67 @@ void main() {
     await prune();
 
     expect(state.failedMarker(old).existsSync(), isFalse);
+  });
+
+  group('suite marker directories', () {
+    // A suite marker directory is <suitesDir>/<containerId>/<database>,
+    // written by rig_postgres's createSuiteDatabase. Removing a container
+    // takes its tmpfs PGDATA with it, so a marker whose container is gone
+    // protects nothing that still exists — and only prune ever looks at a
+    // container that is no longer live, so only prune can reclaim it.
+    Directory suiteDir(String containerId) =>
+        Directory(p.join(state.suitesDir.path, containerId));
+
+    test(
+      'reclaims a suite directory whose container no longer exists',
+      () async {
+        suiteDir('vanished').createSync(recursive: true);
+        File(p.join(suiteDir('vanished').path, 'test_p_1_deadbeef'))
+            .writeAsStringSync('');
+
+        await prune();
+
+        expect(suiteDir('vanished').existsSync(), isFalse);
+      },
+    );
+
+    test(
+      'leaves a suite directory alone while its container is live',
+      () async {
+        final alive = id('alive', created: DateTime.utc(2026, 9, 16, 11, 59));
+        suiteDir(alive).createSync(recursive: true);
+
+        await prune();
+
+        expect(suiteDir(alive).existsSync(), isTrue);
+      },
+    );
+
+    test(
+      'reclaims a suite directory for a container this same run removes',
+      () async {
+        final removed = id('r', created: DateTime.utc(2026, 9, 1));
+        suiteDir(removed).createSync(recursive: true);
+
+        await prune();
+
+        expect(engine.calls, contains('remove:$removed'));
+        expect(suiteDir(removed).existsSync(), isFalse);
+      },
+    );
+
+    test('reports how many stale suite directories it reclaimed', () async {
+      suiteDir('vanished').createSync(recursive: true);
+
+      await prune();
+
+      expect(lines.join('\n'), contains('1 stale suite director'));
+    });
+
+    test('does nothing when there are no suite directories at all', () async {
+      // suitesDir may not exist yet on a machine that has never run a
+      // module built on createSuiteDatabase.
+      await expectLater(prune(), completes);
+    });
   });
 }

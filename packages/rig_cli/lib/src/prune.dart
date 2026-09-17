@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:rig/engine.dart';
 import 'package:rig/rig.dart';
 
@@ -49,13 +50,30 @@ Future<int> runPrune({
     },
   );
 
-  if (doomed.isEmpty && clearedMarkers == 0) {
+  // Every container this run knows the daemon still has, minus whatever it
+  // just removed above — a container's tmpfs PGDATA goes with it, so a
+  // suite marker for anything else has nothing left to protect. This runs
+  // unconditionally, the same way clearing a vanished container's failure
+  // marker does: gating it behind a flag would let orphaned directories pile
+  // up through ordinary use.
+  final knownContainerIds = {for (final c in held) c.id}
+    ..removeAll(doomed.map((c) => c.id));
+  final clearedSuiteDirs = _clearSuiteDirs(
+    stateDir,
+    knownIds: knownContainerIds,
+  );
+
+  if (doomed.isEmpty && clearedMarkers == 0 && clearedSuiteDirs == 0) {
     out('Nothing to remove.');
   } else {
-    final markers = clearedMarkers > 0
-        ? ' and $clearedMarkers stale marker(s)'
-        : '';
-    out('Removed ${doomed.length} container(s)$markers.');
+    final extras = [
+      if (clearedMarkers > 0) '$clearedMarkers stale marker(s)',
+      if (clearedSuiteDirs > 0)
+        '$clearedSuiteDirs stale suite '
+            'director${clearedSuiteDirs == 1 ? 'y' : 'ies'}',
+    ];
+    final suffix = extras.isEmpty ? '' : ' and ${extras.join(' and ')}';
+    out('Removed ${doomed.length} container(s)$suffix.');
   }
   return 0;
 }
@@ -83,6 +101,24 @@ int _clearMarkers(StateDir stateDir, {required Set<String> forIds}) {
       marker.deleteSync();
       cleared++;
     }
+  }
+  return cleared;
+}
+
+/// Removes every subdirectory of [StateDir.suitesDir] whose name — a
+/// container id — is not in [knownIds], and reports how many it removed.
+///
+/// Only prune ever looks at a container that is no longer live, so only
+/// prune can tell a marker directory left behind by a `SIGKILL`ed suite from
+/// one still protecting a database that exists.
+int _clearSuiteDirs(StateDir stateDir, {required Set<String> knownIds}) {
+  if (!stateDir.suitesDir.existsSync()) return 0;
+  var cleared = 0;
+  for (final entry in stateDir.suitesDir.listSync()) {
+    if (entry is! Directory) continue;
+    if (knownIds.contains(p.basename(entry.path))) continue;
+    entry.deleteSync(recursive: true);
+    cleared++;
   }
   return cleared;
 }
