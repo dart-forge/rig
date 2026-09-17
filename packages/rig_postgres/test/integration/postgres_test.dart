@@ -24,11 +24,22 @@ void main() {
   });
 
   tearDownAll(() async {
+    // Only a dedicated container is this suite's own to remove. A shared one
+    // this run reused might be one another run — or another suite in this
+    // same run — is still holding, and the invariant this module is built on
+    // is that a shared container is never removed by a suite; `rig prune`
+    // is the only thing that does. Removing it here regardless of that would
+    // also be unreliable in the other direction: a shared container reused
+    // from an earlier run carries no `_ownLabel`, so the filter below would
+    // not even find it.
     for (final c in await engine.listContainers(
       filters: {
         'label': ['$_ownLabel=$runId'],
       },
     )) {
+      if (RigLabels.tryParse(c.labels)?.lifetime != Lifetime.dedicated) {
+        continue;
+      }
       await engine.removeContainer(c.id);
     }
     await engine.close();
