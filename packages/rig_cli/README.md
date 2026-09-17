@@ -30,23 +30,32 @@ container, not who asked for it first.
 ## rig prune
 
 ```bash
-rig prune                      # shared containers older than 7 days
-rig prune --older-than 1h      # a shorter cutoff
+rig prune                      # shared containers older than 7 days,
+                                # dedicated ones older than 1 hour
+rig prune --older-than 1h      # a shorter cutoff for shared containers
 rig prune --all                # everything rig created, regardless of age
 rig prune --failed             # only the leftovers of runs that failed
 ```
 
-Plain `rig prune` never touches a dedicated container, so it cannot take away
-a server a suite asked to have to itself. It is not otherwise safe by
-construction, and the reason is worth knowing: **age is when Docker created
-the container, not when it was last used** — Docker exposes no such time — so
-a bare prune can remove a shared container a suite is using right now, if
-that container happens to be older than the cutoff. Seven days makes that
-unlikely, not impossible.
+Plain `rig prune` is not safe by construction, and the reason is worth
+knowing: **age is when Docker created the container, not when it was last
+used** — Docker exposes no such time — so a bare prune can remove a container
+a suite is using right now, if that container happens to be older than its
+cutoff.
 
-`--all` drops the age check and the dedicated exemption both, and does not
-look at whether anything is using a container. Run it when no tests are
-running.
+Shared and dedicated containers get different cutoffs because their age means
+different things. A shared container's age is how long reuse across runs has
+been paying off, so seven days makes an unlucky removal unlikely, not
+impossible. A dedicated container is created for one suite and removed at
+that suite's teardown, so its age is essentially that suite's runtime — one
+still around past an hour has outlived any plausible suite, so it can only be
+a leak left by a suite that was killed before teardown ran. `--older-than`
+only tunes the shared cutoff; the one-hour dedicated cutoff is fixed and, like
+the shared one, can still take a container out from under a suite whose run
+genuinely takes longer than that.
+
+`--all` drops both age checks and does not look at whether anything is using
+a container. Run it when no tests are running.
 
 `--failed` wins over `--all` when both are given.
 

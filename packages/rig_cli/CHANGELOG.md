@@ -6,7 +6,9 @@ First release.
   that identifies each one, its state, lifetime, age and the project that
   created it.
 - `rig prune` removes shared containers past a cutoff (`--older-than`,
-  seven days by default) and never touches a dedicated one. Age is when
+  seven days by default) and dedicated containers past a fixed one hour —
+  long enough to outlive any plausible test suite, so a dedicated container
+  still there is a leak from a suite killed before teardown ran. Age is when
   Docker created the container, not when it was last used, because Docker
   exposes no such time.
 - `rig prune --all` removes every container rig created regardless of age or

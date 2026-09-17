@@ -26,6 +26,7 @@ void main() {
 
   Future<int> prune({
     Duration olderThan = const Duration(days: 7),
+    Duration dedicatedOlderThan = const Duration(hours: 1),
     bool all = false,
     bool failedOnly = false,
   }) => runPrune(
@@ -34,6 +35,7 @@ void main() {
     out: lines.add,
     now: now,
     olderThan: olderThan,
+    dedicatedOlderThan: dedicatedOlderThan,
     all: all,
     failedOnly: failedOnly,
   );
@@ -99,22 +101,94 @@ void main() {
     expect(engine.calls.contains('remove:$foreign'), isFalse);
   });
 
-  test('leaves dedicated containers alone unless all is given', () async {
-    // A dedicated container belongs to whoever made it: however old it looks,
-    // it may be serving a suite that is running right now.
-    final dedicated = id(
-      'd',
-      created: DateTime.utc(2026, 9, 1),
-      lifetime: 'dedicated',
-    );
+  group('dedicated containers', () {
+    // A dedicated container is created for one suite and removed at that
+    // suite's teardown, so its age is essentially that suite's runtime. One
+    // still around past the (much shorter) dedicated cutoff has outlived any
+    // plausible suite and can only be a leak from a suite killed before
+    // teardown ran.
+    test('removes a dedicated container two hours old', () async {
+      final leaked = id(
+        'd',
+        created: now.subtract(const Duration(hours: 2)),
+        lifetime: 'dedicated',
+      );
 
-    await prune();
+      await prune();
 
-    expect(engine.calls.contains('remove:$dedicated'), isFalse);
+      expect(engine.calls, contains('remove:$leaked'));
+    });
 
-    await prune(all: true);
+    test('leaves a dedicated container thirty minutes old alone', () async {
+      final inUse = id(
+        'd',
+        created: now.subtract(const Duration(minutes: 30)),
+        lifetime: 'dedicated',
+      );
 
-    expect(engine.calls, contains('remove:$dedicated'));
+      await prune();
+
+      expect(engine.calls.contains('remove:$inUse'), isFalse);
+    });
+
+    test('does not change the shared cutoff', () async {
+      // A shared container's age means something else — how long reuse
+      // across runs has been paying off — so the dedicated cutoff must not
+      // leak into the shared one: an hour-old shared container stays.
+      final sharedYoungerThanSevenDays = id(
+        's',
+        created: now.subtract(const Duration(hours: 2)),
+      );
+
+      await prune();
+
+      expect(
+        engine.calls.contains('remove:$sharedYoungerThanSevenDays'),
+        isFalse,
+      );
+    });
+
+    test('all still removes a dedicated container regardless of age', () async {
+      final fresh = id(
+        'd',
+        created: now.subtract(const Duration(minutes: 1)),
+        lifetime: 'dedicated',
+      );
+
+      await prune(all: true);
+
+      expect(engine.calls, contains('remove:$fresh'));
+    });
+
+    test('failed still ignores age for a dedicated container', () async {
+      final failed = id(
+        'd',
+        created: now.subtract(const Duration(minutes: 1)),
+        lifetime: 'dedicated',
+      );
+      state
+          .failedMarker(failed)
+          .writeAsStringSync(
+            jsonEncode({'containerId': failed, 'image': 'postgres:16-alpine'}),
+          );
+
+      await prune(failedOnly: true);
+
+      expect(engine.calls, contains('remove:$failed'));
+    });
+
+    test('reports shared and dedicated removals separately', () async {
+      id('shared-old', created: DateTime.utc(2026, 9, 1));
+      id(
+        'dedicated-leaked',
+        created: now.subtract(const Duration(hours: 2)),
+        lifetime: 'dedicated',
+      );
+
+      await prune();
+
+      expect(lines.join('\n'), contains('1 shared, 1 dedicated'));
+    });
   });
 
   group('failed', () {

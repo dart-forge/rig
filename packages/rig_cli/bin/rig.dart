@@ -59,7 +59,12 @@ final class _PruneCommand extends Command<int> {
             'is when Docker created the container, not when it was last '
             'used — Docker exposes no such time — so a bare prune can '
             'remove a long-lived shared container a suite is using right '
-            'now.',
+            'now. Dedicated containers are not affected by this flag: a '
+            'bare prune already removes those past a fixed 1 hour, since '
+            'one still around that long has outlived any plausible suite '
+            'and can only be a leak from a suite killed before teardown — '
+            'though the same risk applies if a suite genuinely runs longer '
+            'than that.',
         defaultsTo: '7d',
       )
       ..addFlag(
@@ -80,7 +85,11 @@ final class _PruneCommand extends Command<int> {
   String get name => 'prune';
 
   @override
-  String get description => 'Remove containers rig is holding.';
+  String get description =>
+      'Remove containers rig is holding. A bare run takes shared '
+      'containers past --older-than and dedicated ones past a fixed 1 '
+      'hour, since a dedicated container that old has outlived any '
+      'plausible suite.';
 
   @override
   Future<int> run() async {

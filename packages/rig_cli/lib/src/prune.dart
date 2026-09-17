@@ -6,15 +6,30 @@ import 'package:rig/rig.dart';
 
 /// Remove containers rig is holding.
 ///
-/// By default only shared containers past [olderThan]: a dedicated container
-/// belongs to whoever created it, and may be in use by a suite running right
-/// now even if it looks old.
+/// Shared and dedicated containers are held to different cutoffs because
+/// their age means different things. A shared container's age is how long
+/// reuse across runs has been paying off, so a bare prune only takes one
+/// past [olderThan] (seven days by default) — long enough that removing a
+/// shared container a suite is using right now is unlikely, though not
+/// impossible: age is when Docker created the container, not when it was
+/// last used, since Docker exposes no such time.
+///
+/// A dedicated container means something else entirely: it is created for
+/// one suite and removed at that suite's teardown, so its age is
+/// essentially that suite's runtime. One still around past
+/// [dedicatedOlderThan] (one hour by default) has outlived any plausible
+/// test suite — the only way it gets that old is that its suite was killed
+/// before teardown ran, so it can only be a leak. That said, the same
+/// caveat as [olderThan] applies: if some suite's run genuinely takes
+/// longer than an hour, a bare prune while it is still running will take
+/// its dedicated container out from under it.
 Future<int> runPrune({
   required DockerEngine engine,
   required StateDir stateDir,
   required void Function(String) out,
   required DateTime now,
   Duration olderThan = const Duration(days: 7),
+  Duration dedicatedOlderThan = const Duration(hours: 1),
   bool all = false,
   bool failedOnly = false,
 }) async {
@@ -28,14 +43,23 @@ Future<int> runPrune({
     if (labels == null) return false; // not rig's, never touch it
     if (failedOnly) return failedIds.contains(c.id);
     if (all) return true;
-    if (labels.lifetime == Lifetime.dedicated) return false;
+    if (labels.lifetime == Lifetime.dedicated) {
+      return now.difference(c.created) > dedicatedOlderThan;
+    }
     return now.difference(c.created) > olderThan;
   }).toList();
 
+  var sharedRemoved = 0;
+  var dedicatedRemoved = 0;
   for (final container in doomed) {
     await engine.removeContainer(container.id);
-    final summary =
-        RigLabels.tryParse(container.labels)?.summary ?? container.image;
+    final labels = RigLabels.tryParse(container.labels);
+    final summary = labels?.summary ?? container.image;
+    if (labels?.lifetime == Lifetime.dedicated) {
+      dedicatedRemoved++;
+    } else {
+      sharedRemoved++;
+    }
     out('removed ${_shortId(container.id)}  $summary');
   }
 
@@ -82,7 +106,10 @@ Future<int> runPrune({
             'director${clearedSuiteDirs == 1 ? 'y' : 'ies'}',
     ];
     final suffix = extras.isEmpty ? '' : ' and ${extras.join(' and ')}';
-    out('Removed ${doomed.length} container(s)$suffix.');
+    final breakdown = doomed.isEmpty
+        ? ''
+        : ' ($sharedRemoved shared, $dedicatedRemoved dedicated)';
+    out('Removed ${doomed.length} container(s)$breakdown$suffix.');
   }
 
   // Never silent: a network Docker refuses to drop is exactly the kind of
