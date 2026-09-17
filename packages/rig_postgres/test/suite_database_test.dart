@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:rig/fake_engine.dart';
@@ -418,12 +419,46 @@ void main() {
       },
     );
 
-    test('says nothing and does nothing when the query fails', () async {
-      engine.onExec = (_) =>
-          const ExecResult(exitCode: 1, output: 'ERROR: something');
+    test(
+      'does nothing when the query fails, but says which container',
+      () async {
+        engine.onExec = (_) =>
+            const ExecResult(exitCode: 1, output: 'ERROR: something');
 
-      expect(
-        await dropStaleSuiteDatabases(
+        final lines = <String>[];
+        final dropped = await runZoned(
+          () => dropStaleSuiteDatabases(
+            engine: engine,
+            containerId: containerId,
+            user: 'test',
+            adminDatabase: 'test_db',
+            now: now,
+            stateDir: stateDir,
+          ),
+          zoneSpecification: ZoneSpecification(
+            print: (self, parent, zone, line) => lines.add(line),
+          ),
+        );
+
+        expect(dropped, isEmpty);
+        expect(lines, hasLength(1));
+        expect(lines.single, contains(containerId));
+      },
+    );
+
+    test('says which database it dropped and from which container', () async {
+      final old = suiteDatabaseName(
+        project: 'p',
+        now: now.subtract(const Duration(hours: 3)),
+        token: 'deadbeef',
+      );
+      engine.onExec = (command) => command.last.contains('pg_database')
+          ? ExecResult(exitCode: 0, output: '$old\n')
+          : const ExecResult(exitCode: 0, output: '');
+
+      final lines = <String>[];
+      await runZoned(
+        () => dropStaleSuiteDatabases(
           engine: engine,
           containerId: containerId,
           user: 'test',
@@ -431,8 +466,13 @@ void main() {
           now: now,
           stateDir: stateDir,
         ),
-        isEmpty,
+        zoneSpecification: ZoneSpecification(
+          print: (self, parent, zone, line) => lines.add(line),
+        ),
       );
+
+      expect(lines, hasLength(1));
+      expect(lines.single, allOf(contains(old), contains(containerId)));
     });
   });
 }

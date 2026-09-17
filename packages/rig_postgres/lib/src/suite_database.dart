@@ -186,7 +186,19 @@ Future<List<String>> dropStaleSuiteDatabases({
     "AND NOT EXISTS (SELECT 1 FROM pg_stat_activity a "
     "WHERE a.datname = d.datname)",
   );
-  if (listing.exitCode != 0) return const [];
+  if (listing.exitCode != 0) {
+    // A shared container's data directory is a tmpfs. A sweep that silently
+    // never runs lets suite databases accumulate in RAM until the container
+    // cannot write, which surfaces weeks later as "No space left on device"
+    // in some unrelated suite. Printing here is the only trace of that until
+    // then, and nothing about it is worth failing this test run over.
+    // ignore: avoid_print
+    print(
+      'rig_postgres: could not list suite databases in container '
+      '$containerId to sweep them: ${listing.output}',
+    );
+    return const [];
+  }
 
   final cutoff = now.toUtc().subtract(staleAfter);
   final dropped = <String>[];
@@ -230,6 +242,11 @@ Future<List<String>> dropStaleSuiteDatabases({
       force: false,
     );
     dropped.add(candidate);
+    // ignore: avoid_print
+    print(
+      'rig_postgres: dropped stale suite database $candidate in container '
+      '$containerId',
+    );
   }
   return dropped;
 }
