@@ -11,7 +11,11 @@ void main() {
   final pg = usePostgres(auth: PgAuth.scram);
 
   test('connects', () async {
-    // pg.url is postgresql://test:test@127.0.0.1:<port>/<your own database>
+    // postgresql://test:test@127.0.0.1:<port>/<this suite's own database>.
+    // Hand it to whatever driver you are testing; this package deliberately
+    // depends on no Postgres client.
+    expect(pg.url, startsWith('postgresql://'));
+    expect(pg.database, isNot('test_db'));
   });
 }
 ```
