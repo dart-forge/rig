@@ -34,6 +34,22 @@ void main() {
     expect(postgresSpec().tmpfs, contains('/var/lib/postgresql/data'));
   });
 
+  test('points PGDATA at the tmpfs regardless of version', () {
+    // postgres:18-alpine's own default PGDATA is
+    // /var/lib/postgresql/18/docker, not this path — 16 and 17 default to
+    // it, but 18 does not. Without setting it explicitly, 18 would write to
+    // the container's own writable layer, on disk, and the tmpfs above
+    // would go unused.
+    expect(
+      postgresSpec(version: '18-alpine').env['PGDATA'],
+      '/var/lib/postgresql/data',
+    );
+    expect(
+      postgresSpec(version: '18-alpine').env['PGDATA'],
+      postgresSpec(version: '18-alpine').tmpfs.single,
+    );
+  });
+
   test('probes readiness over TCP as the user that will connect', () {
     // -h 127.0.0.1 is the load-bearing part: during initdb the entrypoint runs
     // a temporary server on the unix socket only, so a TCP probe cannot report

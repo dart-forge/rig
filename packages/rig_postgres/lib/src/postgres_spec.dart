@@ -23,10 +23,20 @@ ContainerSpec postgresSpec({
     if (verboseLogs) ..._verboseFlags,
   ];
 
+  // The official image's default PGDATA moved between major versions:
+  // postgres:18-alpine uses /var/lib/postgresql/18/docker, while 16 and 17
+  // use this path. Setting it explicitly means the path the server actually
+  // writes to is always the one below that is mounted as a tmpfs, regardless
+  // of which default the image in [version] happens to have — otherwise a
+  // version whose default differs writes to the container's own layer, on
+  // disk, silently, in a container that is never removed.
+  const dataDir = '/var/lib/postgresql/data';
+
   final env = {
     'POSTGRES_USER': user,
     'POSTGRES_PASSWORD': password,
     'POSTGRES_DB': database,
+    'PGDATA': dataDir,
     ...setup.env,
   };
   final healthcheck = Healthcheck(
@@ -40,7 +50,7 @@ ContainerSpec postgresSpec({
   );
   const waitFor = WaitFor.healthy(timeout: Duration(seconds: 120));
   // Nothing here outlives the container, and initdb is most of the startup.
-  const tmpfs = {'/var/lib/postgresql/data'};
+  const tmpfs = {dataDir};
 
   if (tlsMaterial == null) {
     return ContainerSpec(
