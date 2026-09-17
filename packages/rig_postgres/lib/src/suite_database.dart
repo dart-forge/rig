@@ -1,6 +1,9 @@
+import 'dart:io';
 import 'dart:math';
 
-import 'package:rig/engine.dart';
+import 'package:path/path.dart' as p;
+import 'package:rig/module.dart';
+import 'package:rig/rig.dart';
 
 /// How long a suite database has to sit unused before it is treated as
 /// abandoned.
@@ -12,16 +15,6 @@ import 'package:rig/engine.dart';
 const Duration defaultStaleAfter = Duration(hours: 1);
 
 final Random _tokens = Random();
-
-/// When this process started, for callers that do not supply a bound.
-///
-/// Nothing this process created can be older than this, which is what makes
-/// the sweep structurally unable to touch a database belonging to a suite
-/// running alongside it. Age and idleness alone cannot tell those apart: a
-/// suite between two connections has no row in `pg_stat_activity`, so the
-/// guard meant to protect it is satisfied by the very state it is meant to
-/// catch.
-final DateTime _processStartedAt = DateTime.now().toUtc();
 
 /// The minute [at] falls in, as it appears inside a database name.
 String minuteStampOf(DateTime at) =>
@@ -69,13 +62,29 @@ String _slugOf(String project) {
   return slug.isEmpty ? 'unnamed' : slug;
 }
 
-/// Creates [database] for one suite inside a container others are sharing.
+/// Where the marker recording that [database] inside [containerId] belongs to
+/// a suite that is still running is kept.
+///
+/// A file rather than an in-memory flag: `dart test` gives every suite file
+/// its own isolate, and isolates share no memory, so the filesystem is the
+/// one channel every isolate in a run can see. Written by
+/// [createSuiteDatabase] and removed by [dropSuiteDatabase]; not private so a
+/// test can plant or inspect one directly.
+File suiteMarkerFile({
+  required StateDir stateDir,
+  required String containerId,
+  required String database,
+}) => File(p.join(stateDir.root.path, 'suites', containerId, database));
+
+/// Creates [database] for one suite inside a container others are sharing,
+/// and marks it as belonging to a running suite.
 Future<void> createSuiteDatabase({
   required DockerEngine engine,
   required String containerId,
   required String user,
   required String adminDatabase,
   required String database,
+  required StateDir stateDir,
 }) async {
   // template0 rather than template1: template1 is where a person's own
   // additions live, and an open connection to it makes CREATE DATABASE fail.
@@ -92,51 +101,81 @@ Future<void> createSuiteDatabase({
       'suite would have run against a shared one.\n${result.output}',
     );
   }
+
+  final marker = suiteMarkerFile(
+    stateDir: stateDir,
+    containerId: containerId,
+    database: database,
+  );
+  marker.parent.createSync(recursive: true);
+  marker.writeAsStringSync('');
 }
 
-/// Drops [database]. Silent when it is already gone.
+/// Drops [database] and clears its marker. Silent when the database is
+/// already gone.
+///
+/// [force] defaults to true: a suite dropping its own database in teardown
+/// wants a leaked connection of its own to not block that. The sweep asks for
+/// `force: false` instead — forcing there would remove the very protection
+/// the "nobody connected" check exists to give a live suite between
+/// connections.
 Future<void> dropSuiteDatabase({
   required DockerEngine engine,
   required String containerId,
   required String user,
   required String adminDatabase,
   required String database,
+  required StateDir stateDir,
+  bool force = true,
 }) async {
-  // FORCE so a connection a test forgot to close cannot block teardown, and no
-  // throw on failure: teardown also runs after a failure, and a database that
-  // is already gone is the state teardown was asking for.
+  // No throw on failure: teardown also runs after a failure, and a database
+  // that is already gone is the state teardown was asking for.
   await _psql(
     engine,
     containerId,
     user,
     adminDatabase,
-    'DROP DATABASE IF EXISTS $database WITH (FORCE)',
+    'DROP DATABASE IF EXISTS $database${force ? ' WITH (FORCE)' : ''}',
   );
+
+  final marker = suiteMarkerFile(
+    stateDir: stateDir,
+    containerId: containerId,
+    database: database,
+  );
+  try {
+    if (marker.existsSync()) marker.deleteSync();
+  } on FileSystemException {
+    // Nothing to undo if it cannot be removed.
+  }
 }
 
-/// Drops suite databases nobody is connected to that are older than
-/// [staleAfter], and returns the ones it dropped.
+/// Drops suite databases nobody is connected to, that are old enough to be
+/// considered abandoned, and that carry no marker — and returns the ones it
+/// dropped.
 ///
 /// Shared containers are deliberately long-lived, and each suite database is a
 /// clone of template0 sitting in a tmpfs — so a run that dies before its
 /// teardown costs memory until something clears it.
+///
+/// Nothing here throws. A broken sweep is not worth failing a test run over;
+/// see [createSuiteDatabase] for what actually keeps a suite's own database
+/// isolated.
 Future<List<String>> dropStaleSuiteDatabases({
   required DockerEngine engine,
   required String containerId,
   required String user,
   required String adminDatabase,
   required DateTime now,
+  required StateDir stateDir,
   Duration staleAfter = defaultStaleAfter,
-  DateTime? processStartedAt,
 }) async {
-  // Both ends of the comparison are injectable. Taking `now` from the caller
-  // and the process bound from the real clock would tie every test with a
-  // frozen clock to wall-clock time, which is how a test of a destructive
-  // operation becomes flaky.
-  final startedAt = processStartedAt ?? _processStartedAt;
-
   // Age alone is not evidence: a suite holding a lease may simply be between
-  // connections. Both conditions have to hold.
+  // connections. Neither is "nobody connected" alone, for the same reason.
+  // What actually distinguishes a live suite is the marker
+  // createSuiteDatabase writes and dropSuiteDatabase removes — the
+  // filesystem is the one channel every isolate in a `dart test` run can
+  // see, unlike anything held in memory.
   final listing = await _psql(
     engine,
     containerId,
@@ -167,10 +206,19 @@ Future<List<String>> dropStaleSuiteDatabases({
     final createdNoLaterThan = createdAt.add(const Duration(minutes: 1));
     if (!createdNoLaterThan.isBefore(cutoff)) continue;
 
-    // Never a database this process could have created. Suites in this run
-    // share the process, so this rules them out by construction instead of
-    // relying on the age margin being generous enough.
-    if (!createdNoLaterThan.isBefore(startedAt)) continue;
+    // A marker means some suite still claims this database, however long it
+    // has been since anyone connected to it — a suite between connections is
+    // exactly what the marker exists to protect. The age check above is what
+    // still catches a database whose marker has not been written yet (the
+    // instant between CREATE DATABASE and the marker being written) rather
+    // than condemning it as if it were abandoned.
+    if (suiteMarkerFile(
+      stateDir: stateDir,
+      containerId: containerId,
+      database: candidate,
+    ).existsSync()) {
+      continue;
+    }
 
     await dropSuiteDatabase(
       engine: engine,
@@ -178,6 +226,8 @@ Future<List<String>> dropStaleSuiteDatabases({
       user: user,
       adminDatabase: adminDatabase,
       database: candidate,
+      stateDir: stateDir,
+      force: false,
     );
     dropped.add(candidate);
   }

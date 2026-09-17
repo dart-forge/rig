@@ -1,4 +1,4 @@
-import 'package:rig/engine.dart';
+import 'package:rig/module.dart';
 import 'package:rig/rig.dart';
 import 'package:test/test.dart';
 
@@ -93,6 +93,7 @@ PostgresLease usePostgres({
           user: user,
           adminDatabase: database,
           now: DateTime.now(),
+          stateDir: resolvedStateDir,
         );
 
         final name = suiteDatabaseName(
@@ -106,6 +107,7 @@ PostgresLease usePostgres({
           user: user,
           adminDatabase: database,
           database: name,
+          stateDir: resolvedStateDir,
         );
         suiteDatabase = name;
         lease.bindDatabase(name);
@@ -122,6 +124,7 @@ PostgresLease usePostgres({
       user: user,
       adminDatabase: database,
       database: name,
+      stateDir: resolvedStateDir,
     );
   });
 

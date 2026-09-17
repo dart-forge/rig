@@ -1,5 +1,8 @@
-import 'package:rig/engine.dart';
+import 'dart:io';
+
 import 'package:rig/fake_engine.dart';
+import 'package:rig/module.dart';
+import 'package:rig/rig.dart';
 import 'package:rig_postgres/src/suite_database.dart';
 import 'package:test/test.dart';
 
@@ -8,12 +11,18 @@ void main() {
   // FakeDockerEngine.exec requires the container to be registered, so every
   // test below runs against one it created rather than a bare literal id.
   late String containerId;
+  late Directory tmp;
+  late StateDir stateDir;
   final now = DateTime.utc(2026, 9, 17, 10, 30);
 
   setUp(() {
     engine = FakeDockerEngine();
     containerId = engine.addContainer(labels: const {});
+    tmp = Directory.systemTemp.createTempSync('rig_pg_suite_');
+    stateDir = StateDir(tmp);
   });
+
+  tearDown(() => tmp.deleteSync(recursive: true));
 
   String sqlOf(String call) => call.split(':').skip(2).join(':');
 
@@ -101,12 +110,33 @@ void main() {
         user: 'test',
         adminDatabase: 'test_db',
         database: 'test_p_x',
+        stateDir: stateDir,
       );
 
       final sql = sqlOf(engine.calls.last);
       expect(sql, contains('CREATE DATABASE test_p_x'));
       expect(sql, contains('TEMPLATE template0'));
       expect(sql, isNot(contains('template1')));
+    });
+
+    test('marks the database as belonging to a running suite', () async {
+      await createSuiteDatabase(
+        engine: engine,
+        containerId: containerId,
+        user: 'test',
+        adminDatabase: 'test_db',
+        database: 'test_p_x',
+        stateDir: stateDir,
+      );
+
+      expect(
+        suiteMarkerFile(
+          stateDir: stateDir,
+          containerId: containerId,
+          database: 'test_p_x',
+        ).existsSync(),
+        isTrue,
+      );
     });
 
     test(
@@ -122,6 +152,7 @@ void main() {
             user: 'test',
             adminDatabase: 'test_db',
             database: 'test_p_x',
+            stateDir: stateDir,
           ),
           throwsA(
             isA<StateError>().having(
@@ -145,12 +176,59 @@ void main() {
           user: 'test',
           adminDatabase: 'test_db',
           database: 'test_p_x',
+          stateDir: stateDir,
         );
 
         expect(sqlOf(engine.calls.last), contains('DROP DATABASE IF EXISTS'));
         expect(sqlOf(engine.calls.last), contains('WITH (FORCE)'));
       },
     );
+
+    test('a sweep-driven drop does not force', () async {
+      // Forcing would remove the very protection the "nobody connected"
+      // check exists to give a live suite between connections.
+      await dropSuiteDatabase(
+        engine: engine,
+        containerId: containerId,
+        user: 'test',
+        adminDatabase: 'test_db',
+        database: 'test_p_x',
+        stateDir: stateDir,
+        force: false,
+      );
+
+      expect(sqlOf(engine.calls.last), contains('DROP DATABASE IF EXISTS'));
+      expect(sqlOf(engine.calls.last), isNot(contains('FORCE')));
+    });
+
+    test('clears the marker along with the database', () async {
+      await createSuiteDatabase(
+        engine: engine,
+        containerId: containerId,
+        user: 'test',
+        adminDatabase: 'test_db',
+        database: 'test_p_x',
+        stateDir: stateDir,
+      );
+
+      final marker = suiteMarkerFile(
+        stateDir: stateDir,
+        containerId: containerId,
+        database: 'test_p_x',
+      );
+      expect(marker.existsSync(), isTrue);
+
+      await dropSuiteDatabase(
+        engine: engine,
+        containerId: containerId,
+        user: 'test',
+        adminDatabase: 'test_db',
+        database: 'test_p_x',
+        stateDir: stateDir,
+      );
+
+      expect(marker.existsSync(), isFalse);
+    });
 
     test('does not throw when the database is already gone', () async {
       // Teardown runs after a failure too, and a missing database is the state
@@ -167,6 +245,7 @@ void main() {
           user: 'test',
           adminDatabase: 'test_db',
           database: 'test_p_x',
+          stateDir: stateDir,
         ),
         completes,
       );
@@ -177,12 +256,6 @@ void main() {
     test('drops only what is old and unused', () async {
       // Tokens are hex because that is what newSuiteToken produces, and the
       // parser only accepts names this module could have written.
-      //
-      // Both were made before this notional process started, so the process
-      // bound lets them through and the age comparison is what separates
-      // them. Arranged that way on purpose: if `fresh` were newer than the
-      // process it would be spared by the wrong guard and the test would
-      // still pass.
       final old = suiteDatabaseName(
         project: 'p',
         now: now.subtract(const Duration(hours: 3)),
@@ -207,7 +280,7 @@ void main() {
         user: 'test',
         adminDatabase: 'test_db',
         now: now,
-        processStartedAt: now.subtract(const Duration(seconds: 30)),
+        stateDir: stateDir,
       );
 
       expect(dropped, [old]);
@@ -215,6 +288,34 @@ void main() {
       expect(
         engine.calls.join('\n'),
         isNot(contains('DROP DATABASE IF EXISTS $fresh')),
+      );
+    });
+
+    test('never forces the drop it makes on someone else\'s behalf', () async {
+      final old = suiteDatabaseName(
+        project: 'p',
+        now: now.subtract(const Duration(hours: 3)),
+        token: 'deadbeef',
+      );
+      engine.onExec = (command) => command.last.contains('pg_database')
+          ? ExecResult(exitCode: 0, output: '$old\n')
+          : const ExecResult(exitCode: 0, output: '');
+
+      await dropStaleSuiteDatabases(
+        engine: engine,
+        containerId: containerId,
+        user: 'test',
+        adminDatabase: 'test_db',
+        now: now,
+        stateDir: stateDir,
+      );
+
+      expect(
+        engine.calls.join('\n'),
+        isNot(contains('FORCE')),
+        reason:
+            'forcing here would remove the protection the pg_stat_activity '
+            'check exists to give a live suite between connections',
       );
     });
 
@@ -237,6 +338,7 @@ void main() {
         user: 'test',
         adminDatabase: 'test_db',
         now: now,
+        stateDir: stateDir,
         staleAfter: const Duration(seconds: 30),
       );
 
@@ -255,6 +357,7 @@ void main() {
           user: 'test',
           adminDatabase: 'test_db',
           now: now,
+          stateDir: stateDir,
         ),
         isEmpty,
       );
@@ -269,6 +372,7 @@ void main() {
         user: 'test',
         adminDatabase: 'test_db',
         now: now,
+        stateDir: stateDir,
       );
 
       // A suite holding a lease may be between connections, so age alone is
@@ -276,29 +380,43 @@ void main() {
       expect(sqlOf(engine.calls.first), contains('pg_stat_activity'));
     });
 
-    test('never drops a database this process could have created', () async {
-      // A suite running alongside this one is between connections as often as
-      // not, so no query can distinguish it from an abandoned database. Being
-      // in the same process can.
-      final mine = suiteDatabaseName(project: 'p', now: now, token: 'aaaabbbb');
-      engine.onExec = (command) => command.last.contains('pg_database')
-          ? ExecResult(exitCode: 0, output: '$mine\n')
-          : const ExecResult(exitCode: 0, output: '');
+    test(
+      'a marked database survives a sweep that would otherwise drop it',
+      () async {
+        // Old enough, and nobody is connected to it right now — by the age
+        // and connection rules alone this would be condemned. Only the
+        // marker, which createSuiteDatabase writes and only teardown
+        // removes, says a suite still claims it.
+        final claimed = suiteDatabaseName(
+          project: 'p',
+          now: now.subtract(const Duration(hours: 3)),
+          token: 'deadbeef',
+        );
+        final marker = suiteMarkerFile(
+          stateDir: stateDir,
+          containerId: containerId,
+          database: claimed,
+        );
+        marker.parent.createSync(recursive: true);
+        marker.writeAsStringSync('');
 
-      final dropped = await dropStaleSuiteDatabases(
-        engine: engine,
-        containerId: containerId,
-        user: 'test',
-        adminDatabase: 'test_db',
-        // Judged far in the future with a tiny threshold, so age alone would
-        // condemn it. Only the process bound saves it.
-        now: now.add(const Duration(days: 1)),
-        staleAfter: const Duration(seconds: 1),
-        processStartedAt: now.subtract(const Duration(minutes: 1)),
-      );
+        engine.onExec = (command) => command.last.contains('pg_database')
+            ? ExecResult(exitCode: 0, output: '$claimed\n')
+            : const ExecResult(exitCode: 0, output: '');
 
-      expect(dropped, isEmpty);
-    });
+        final dropped = await dropStaleSuiteDatabases(
+          engine: engine,
+          containerId: containerId,
+          user: 'test',
+          adminDatabase: 'test_db',
+          now: now,
+          stateDir: stateDir,
+        );
+
+        expect(dropped, isEmpty);
+        expect(engine.calls.join('\n'), isNot(contains('DROP DATABASE')));
+      },
+    );
 
     test('says nothing and does nothing when the query fails', () async {
       engine.onExec = (_) =>
@@ -311,6 +429,7 @@ void main() {
           user: 'test',
           adminDatabase: 'test_db',
           now: now,
+          stateDir: stateDir,
         ),
         isEmpty,
       );
