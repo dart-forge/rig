@@ -128,7 +128,19 @@ void main() {
       );
 
       test('accepts a connection over TCP', () async {
-        final result = await overTcp(pg.container.containerId, "SELECT 'ok'");
+        // Through containerSelfIp, not the usual 127.0.0.1: initdb's own
+        // default pg_hba.conf trusts the loopback address ahead of whatever
+        // method this module configures, so a connection there would accept
+        // any password and prove nothing about the auth mode actually being
+        // enforced. The container's own address is what makes the appended
+        // `host all all all <method>` line — the one this test cares about
+        // — the one pg_hba applies.
+        final selfIp = await containerSelfIp(pg.container.containerId);
+        final result = await overTcp(
+          pg.container.containerId,
+          "SELECT 'ok'",
+          host: selfIp,
+        );
 
         expect(result.exitCode, 0, reason: result.output);
         expect(result.output.trim(), 'ok');
