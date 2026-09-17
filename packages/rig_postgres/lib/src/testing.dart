@@ -63,7 +63,6 @@ PostgresLease usePostgres({
     container: container,
     user: user,
     password: password,
-    database: database,
   );
 
   String? suiteDatabase;
@@ -80,7 +79,10 @@ PostgresLease usePostgres({
       database: database,
     );
 
-    if (isolation == PgIsolation.none) return;
+    if (isolation == PgIsolation.none) {
+      lease.bindDatabase(database);
+      return;
+    }
 
     // One suite at a time: creating a database and clearing abandoned ones are
     // not things several suites should do to one container at once.
