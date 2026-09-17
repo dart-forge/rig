@@ -4,6 +4,11 @@ import 'package:rig/engine.dart';
 
 /// How long a suite database has to sit unused before it is treated as
 /// abandoned.
+///
+/// Well above a minute on purpose: a name carries the minute it was created
+/// in, floored, so anything near that resolution cannot distinguish a
+/// database abandoned an hour ago from one created moments before a minute
+/// boundary.
 const Duration defaultStaleAfter = Duration(hours: 1);
 
 final Random _tokens = Random();
@@ -78,7 +83,7 @@ Future<void> dropSuiteDatabase({
     containerId,
     user,
     adminDatabase,
-    'DROP DATABASE $database WITH (FORCE)',
+    'DROP DATABASE IF EXISTS $database WITH (FORCE)',
   );
 }
 
@@ -118,7 +123,15 @@ Future<List<String>> dropStaleSuiteDatabases({
     if (candidate.isEmpty) continue;
 
     final createdAt = _createdAtOf(candidate);
-    if (createdAt == null || !createdAt.isBefore(cutoff)) continue;
+    if (createdAt == null) continue;
+
+    // The stamp is the minute the database was created in, floored, so the
+    // database can be up to a minute younger than it claims. Judge it by the
+    // latest moment it could have been created, never the earliest: being
+    // wrong in the other direction would drop a database whose own suite has
+    // not connected to it yet.
+    final createdNoLaterThan = createdAt.add(const Duration(minutes: 1));
+    if (!createdNoLaterThan.isBefore(cutoff)) continue;
 
     await dropSuiteDatabase(
       engine: engine,
@@ -135,7 +148,7 @@ Future<List<String>> dropStaleSuiteDatabases({
 /// The minute stamp out of a name this module produced, or null when the name
 /// did not come from here.
 DateTime? _createdAtOf(String database) {
-  final match = RegExp(r'^test_.*_(\d+)_[^_]+$').firstMatch(database);
+  final match = RegExp(r'^test_.*_(\d+)_[0-9a-f]{8}$').firstMatch(database);
   if (match == null) return null;
   final minutes = int.tryParse(match.group(1)!);
   if (minutes == null) return null;

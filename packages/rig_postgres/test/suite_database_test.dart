@@ -114,7 +114,7 @@ void main() {
           database: 'test_p_x',
         );
 
-        expect(sqlOf(engine.calls.last), contains('DROP DATABASE'));
+        expect(sqlOf(engine.calls.last), contains('DROP DATABASE IF EXISTS'));
         expect(sqlOf(engine.calls.last), contains('WITH (FORCE)'));
       },
     );
@@ -142,15 +142,17 @@ void main() {
 
   group('dropStaleSuiteDatabases', () {
     test('drops only what is old and unused', () async {
+      // Tokens are hex because that is what newSuiteToken produces, and the
+      // parser only accepts names this module could have written.
       final old = suiteDatabaseName(
         project: 'p',
         now: now.subtract(const Duration(hours: 3)),
-        token: 'oldoldold',
+        token: 'deadbeef',
       );
       final fresh = suiteDatabaseName(
         project: 'p',
         now: now,
-        token: 'freshfre',
+        token: 'cafebabe',
       );
       engine.onExec = (command) {
         final sql = command.last;
@@ -169,8 +171,36 @@ void main() {
       );
 
       expect(dropped, [old]);
-      expect(engine.calls.join('\n'), contains('DROP DATABASE $old'));
-      expect(engine.calls.join('\n'), isNot(contains('DROP DATABASE $fresh')));
+      expect(engine.calls.join('\n'), contains('DROP DATABASE IF EXISTS $old'));
+      expect(
+        engine.calls.join('\n'),
+        isNot(contains('DROP DATABASE IF EXISTS $fresh')),
+      );
+    });
+
+    test('keeps a database created just before a minute boundary', () async {
+      // The stamp is floored, so this database claims to be a minute older
+      // than it is. Judged by the stamp alone it would be dropped before its
+      // own suite ever connected.
+      final justMade = suiteDatabaseName(
+        project: 'p',
+        now: now.subtract(const Duration(seconds: 59)),
+        token: 'abcdabcd',
+      );
+      engine.onExec = (command) => command.last.contains('pg_database')
+          ? ExecResult(exitCode: 0, output: '$justMade\n')
+          : const ExecResult(exitCode: 0, output: '');
+
+      final dropped = await dropStaleSuiteDatabases(
+        engine: engine,
+        containerId: containerId,
+        user: 'test',
+        adminDatabase: 'test_db',
+        now: now,
+        staleAfter: const Duration(seconds: 30),
+      );
+
+      expect(dropped, isEmpty);
     });
 
     test('ignores a name it did not create', () async {
