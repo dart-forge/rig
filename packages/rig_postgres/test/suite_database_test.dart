@@ -381,43 +381,139 @@ void main() {
       expect(sqlOf(engine.calls.first), contains('pg_stat_activity'));
     });
 
-    test(
-      'a marked database survives a sweep that would otherwise drop it',
-      () async {
-        // Old enough, and nobody is connected to it right now — by the age
-        // and connection rules alone this would be condemned. Only the
-        // marker, which createSuiteDatabase writes and only teardown
-        // removes, says a suite still claims it.
-        final claimed = suiteDatabaseName(
-          project: 'p',
-          now: now.subtract(const Duration(hours: 3)),
-          token: 'deadbeef',
-        );
-        final marker = suiteMarkerFile(
-          stateDir: stateDir,
-          containerId: containerId,
-          database: claimed,
-        );
-        marker.parent.createSync(recursive: true);
-        marker.writeAsStringSync('');
+    test('a marked database with a fresh marker survives a sweep that would '
+        'otherwise drop it', () async {
+      // Old enough, and nobody is connected to it right now — by the age
+      // and connection rules alone this would be condemned. Only the
+      // marker, which createSuiteDatabase writes and only teardown
+      // removes, says a suite still claims it.
+      final claimed = suiteDatabaseName(
+        project: 'p',
+        now: now.subtract(const Duration(hours: 3)),
+        token: 'deadbeef',
+      );
+      final marker = suiteMarkerFile(
+        stateDir: stateDir,
+        containerId: containerId,
+        database: claimed,
+      );
+      marker.parent.createSync(recursive: true);
+      marker.writeAsStringSync('');
+      // Explicit rather than relying on the marker having just been
+      // written at real wall-clock time: this pins "fresh" to the fixed
+      // `now` this test already reasons about everywhere else.
+      marker.setLastModifiedSync(now.subtract(const Duration(minutes: 1)));
 
-        engine.onExec = (command) => command.last.contains('pg_database')
-            ? ExecResult(exitCode: 0, output: '$claimed\n')
-            : const ExecResult(exitCode: 0, output: '');
+      engine.onExec = (command) => command.last.contains('pg_database')
+          ? ExecResult(exitCode: 0, output: '$claimed\n')
+          : const ExecResult(exitCode: 0, output: '');
 
-        final dropped = await dropStaleSuiteDatabases(
-          engine: engine,
-          containerId: containerId,
-          user: 'test',
-          adminDatabase: 'test_db',
-          now: now,
-          stateDir: stateDir,
-        );
+      final dropped = await dropStaleSuiteDatabases(
+        engine: engine,
+        containerId: containerId,
+        user: 'test',
+        adminDatabase: 'test_db',
+        now: now,
+        stateDir: stateDir,
+      );
 
-        expect(dropped, isEmpty);
-        expect(engine.calls.join('\n'), isNot(contains('DROP DATABASE')));
-      },
-    );
+      expect(dropped, isEmpty);
+      expect(engine.calls.join('\n'), isNot(contains('DROP DATABASE')));
+      expect(
+        marker.existsSync(),
+        isTrue,
+        reason: 'a marker that still protects its database must survive',
+      );
+    });
+
+    test('a database whose marker is older than markerStaleAfter is dropped, '
+        'and the marker goes with it', () async {
+      // Without this, the sweep could never reclaim anything at all: a
+      // database whose teardown ran was already dropped by that same
+      // teardown, so every database the sweep ever meets either never had
+      // a marker or still carries one from a suite that did not reach
+      // teardown. The marker's own age is what tells that suite apart
+      // from one merely between connections.
+      final abandoned = suiteDatabaseName(
+        project: 'p',
+        now: now.subtract(const Duration(hours: 3)),
+        token: 'deadbeef',
+      );
+      final marker = suiteMarkerFile(
+        stateDir: stateDir,
+        containerId: containerId,
+        database: abandoned,
+      );
+      marker.parent.createSync(recursive: true);
+      marker.writeAsStringSync('');
+      marker.setLastModifiedSync(
+        now.subtract(const Duration(hours: 25)),
+      ); // older than the 24-hour default
+
+      engine.onExec = (command) => command.last.contains('pg_database')
+          ? ExecResult(exitCode: 0, output: '$abandoned\n')
+          : const ExecResult(exitCode: 0, output: '');
+
+      final dropped = await dropStaleSuiteDatabases(
+        engine: engine,
+        containerId: containerId,
+        user: 'test',
+        adminDatabase: 'test_db',
+        now: now,
+        stateDir: stateDir,
+      );
+
+      expect(dropped, [abandoned]);
+      expect(
+        engine.calls.join('\n'),
+        contains('DROP DATABASE IF EXISTS $abandoned'),
+      );
+      expect(
+        marker.existsSync(),
+        isFalse,
+        reason: 'a marker that no longer protects anything must not linger',
+      );
+    });
+
+    test('a marker aged between the two thresholds still protects its '
+        'database, so the thresholds are not collapsed into one', () async {
+      // The database is old enough to be dropped by staleAfter (an hour,
+      // by default) on its own. Its marker is older than that same
+      // staleAfter but younger than markerStaleAfter (a day). If the
+      // marker check compared against staleAfter instead of its own
+      // threshold, this marker would be wrongly judged expired.
+      final claimed = suiteDatabaseName(
+        project: 'p',
+        now: now.subtract(const Duration(hours: 3)),
+        token: 'deadbeef',
+      );
+      final marker = suiteMarkerFile(
+        stateDir: stateDir,
+        containerId: containerId,
+        database: claimed,
+      );
+      marker.parent.createSync(recursive: true);
+      marker.writeAsStringSync('');
+      // Older than the default staleAfter (1 hour), younger than the
+      // default markerStaleAfter (24 hours).
+      marker.setLastModifiedSync(now.subtract(const Duration(hours: 2)));
+
+      engine.onExec = (command) => command.last.contains('pg_database')
+          ? ExecResult(exitCode: 0, output: '$claimed\n')
+          : const ExecResult(exitCode: 0, output: '');
+
+      final dropped = await dropStaleSuiteDatabases(
+        engine: engine,
+        containerId: containerId,
+        user: 'test',
+        adminDatabase: 'test_db',
+        now: now,
+        stateDir: stateDir,
+      );
+
+      expect(dropped, isEmpty);
+      expect(engine.calls.join('\n'), isNot(contains('DROP DATABASE')));
+    });
 
     test(
       'does nothing when the query fails, but says which container',

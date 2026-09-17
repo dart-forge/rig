@@ -14,6 +14,17 @@ import 'package:rig/rig.dart';
 /// boundary.
 const Duration defaultStaleAfter = Duration(hours: 1);
 
+/// How long a suite's marker is trusted before the suite is presumed gone.
+///
+/// A day, against test runs measured in minutes. A marker younger than this
+/// protects its database unconditionally — no age or connection check can
+/// tell a suite sitting between two connections from an abandoned one, which
+/// is why the marker exists. Older than this and the suite is not coming
+/// back, and without that half the sweep would reclaim nothing at all: a
+/// database whose teardown ran was already dropped by that teardown, so every
+/// database the sweep meets still carries its marker.
+const Duration defaultMarkerStaleAfter = Duration(hours: 24);
+
 final Random _tokens = Random();
 
 /// The minute [at] falls in, as it appears inside a database name.
@@ -164,8 +175,8 @@ Future<void> dropSuiteDatabase({
 }
 
 /// Drops suite databases nobody is connected to, that are old enough to be
-/// considered abandoned, and that carry no marker — and returns the ones it
-/// dropped.
+/// considered abandoned, and whose marker is either absent or itself too old
+/// to trust — and returns the ones it dropped.
 ///
 /// Shared containers are deliberately long-lived, and each suite database is a
 /// clone of template0 sitting in a tmpfs — so a run that dies before its
@@ -182,6 +193,7 @@ Future<List<String>> dropStaleSuiteDatabases({
   required DateTime now,
   required StateDir stateDir,
   Duration staleAfter = defaultStaleAfter,
+  Duration markerStaleAfter = defaultMarkerStaleAfter,
 }) async {
   // Age alone is not evidence: a suite holding a lease may simply be between
   // connections. Neither is "nobody connected" alone, for the same reason.
@@ -231,18 +243,27 @@ Future<List<String>> dropStaleSuiteDatabases({
     final createdNoLaterThan = createdAt.add(const Duration(minutes: 1));
     if (!createdNoLaterThan.isBefore(cutoff)) continue;
 
-    // A marker means some suite still claims this database, however long it
-    // has been since anyone connected to it — a suite between connections is
-    // exactly what the marker exists to protect. The age check above is what
-    // still catches a database whose marker has not been written yet (the
-    // instant between CREATE DATABASE and the marker being written) rather
-    // than condemning it as if it were abandoned.
-    if (suiteMarkerFile(
+    // A fresh marker means some suite still claims this database, however
+    // long it has been since anyone connected to it — a suite between
+    // connections is exactly what the marker exists to protect. But a
+    // marker only survives as long as its suite does: teardown is what
+    // removes it, so a database whose teardown ran was already dropped by
+    // that same teardown. Every database that reaches this point either
+    // never had a marker, or still carries one from a suite that never got
+    // to teardown — and only the marker's own age, on a much longer
+    // threshold than staleAfter (a run lasts minutes, abandonment is a
+    // matter of days), can tell those two apart from a suite that is
+    // genuinely still running.
+    final marker = suiteMarkerFile(
       stateDir: stateDir,
       containerId: containerId,
       database: candidate,
-    ).existsSync()) {
-      continue;
+    );
+    if (marker.existsSync()) {
+      final markerAge = now.toUtc().difference(
+        marker.lastModifiedSync().toUtc(),
+      );
+      if (markerAge <= markerStaleAfter) continue;
     }
 
     await dropSuiteDatabase(
