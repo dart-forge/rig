@@ -1,6 +1,6 @@
 name: rig_postgres
 description: Postgres containers for Dart tests — the auth mode you asked for, and a database of your own.
-version: 0.1.0
+version: 0.2.0
 repository: https://github.com/dart-forge/rig
 topics:
   - testing
@@ -16,7 +16,7 @@ resolution: workspace
 dependencies:
   crypto: ^3.0.0
   path: ^1.9.0
-  rig: ^0.1.0
+  rig: ^0.2.0
   test: ^1.25.0
 
 dev_dependencies:

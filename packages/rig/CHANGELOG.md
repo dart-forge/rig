@@ -1,4 +1,8 @@
-## Unreleased
+## 0.2.0
+
+- **Containers from 0.1.0 are not reused.** Adding a field to `ContainerSpec`
+  changes every configuration hash, so the first run on this version creates
+  fresh containers and leaves the old ones behind. `rig prune` clears them.
 
 - `ContainerSpec.files` places files inside the container **before it
   starts**, for a server that reads its configuration at startup — too late

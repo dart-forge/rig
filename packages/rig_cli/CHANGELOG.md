@@ -1,3 +1,13 @@
+## 0.2.0
+
+No functional change in this package. It moves to `rig: ^0.2.0`, because
+`^0.1.0` does not admit rig 0.2.0 and would otherwise hold you to rig 0.1.x.
+
+One consequence is worth knowing: rig 0.2.0 changes every configuration hash,
+so the containers 0.1.0 left running are not reused. The first run on this
+version creates fresh ones and leaves the old ones behind; `rig prune` clears
+them.
+
 ## 0.1.0
 
 First release.
