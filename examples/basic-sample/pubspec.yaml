@@ -8,7 +8,9 @@ environment:
 resolution: workspace
 
 dev_dependencies:
+  aim_postgres: ^0.2.0
   lints: ^5.0.0
+  postgres: ^3.5.0
   rig: any
   rig_postgres: any
   rig_redis: any
