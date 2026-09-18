@@ -3,6 +3,7 @@ library;
 
 export 'src/engine/docker_engine.dart' show ExecResult;
 export 'src/errors.dart';
+export 'src/prune.dart';
 export 'src/spec/container_spec.dart' hide NormalizedSpec, normalizeSpec;
 export 'src/wait/wait_for.dart';
 export 'src/lease/container_lease.dart';

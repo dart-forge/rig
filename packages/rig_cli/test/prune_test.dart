@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -8,6 +7,10 @@ import 'package:rig/rig.dart';
 import 'package:rig_cli/src/prune.dart';
 import 'package:test/test.dart';
 
+/// What `runPrune` decides to remove is tested against `pruneContainers`
+/// itself, in `rig`'s own test suite — that decision moved there along with
+/// the logic. What is left here is the formatting: the words `runPrune`
+/// prints for a given [PruneResult], and the flags that shape it.
 void main() {
   late FakeDockerEngine engine;
   late Directory tmp;
@@ -18,7 +21,7 @@ void main() {
 
   setUp(() {
     engine = FakeDockerEngine();
-    tmp = Directory.systemTemp.createTempSync('rig_prune_');
+    tmp = Directory.systemTemp.createTempSync('rig_cli_prune_');
     state = StateDir(tmp)..ensure();
     lines = [];
   });
@@ -56,16 +59,6 @@ void main() {
     network: network,
   );
 
-  test('removes containers older than the threshold', () async {
-    final old = id('old', created: DateTime.utc(2026, 9, 1));
-    final fresh = id('fresh', created: DateTime.utc(2026, 9, 16, 6));
-
-    expect(await prune(), 0);
-
-    expect(engine.calls, contains('remove:$old'));
-    expect(engine.calls.contains('remove:$fresh'), isFalse);
-  });
-
   test('says how many it removed', () async {
     id('old', created: DateTime.utc(2026, 9, 1));
 
@@ -82,297 +75,34 @@ void main() {
     expect(lines.join('\n'), contains('Nothing'));
   });
 
-  test('all removes everything rig made, whatever its age', () async {
-    final fresh = id('fresh', created: DateTime.utc(2026, 9, 16, 11, 59));
-
-    await prune(all: true);
-
-    expect(engine.calls, contains('remove:$fresh'));
-  });
-
-  test('never touches a container rig did not make', () async {
-    final foreign = engine.addContainer(
-      labels: {'com.example.thing': '1'},
-      created: DateTime.utc(2020, 1, 1),
+  test('reports shared and dedicated removals separately', () async {
+    id('shared-old', created: DateTime.utc(2026, 9, 1));
+    id(
+      'dedicated-leaked',
+      created: now.subtract(const Duration(hours: 2)),
+      lifetime: 'dedicated',
     );
-
-    await prune(all: true);
-
-    expect(engine.calls.contains('remove:$foreign'), isFalse);
-  });
-
-  group('dedicated containers', () {
-    // A dedicated container is created for one suite and removed at that
-    // suite's teardown, so its age is essentially that suite's runtime. One
-    // still around past the (much shorter) dedicated cutoff has outlived any
-    // plausible suite and can only be a leak from a suite killed before
-    // teardown ran.
-    test('removes a dedicated container two hours old', () async {
-      final leaked = id(
-        'd',
-        created: now.subtract(const Duration(hours: 2)),
-        lifetime: 'dedicated',
-      );
-
-      await prune();
-
-      expect(engine.calls, contains('remove:$leaked'));
-    });
-
-    test('leaves a dedicated container thirty minutes old alone', () async {
-      final inUse = id(
-        'd',
-        created: now.subtract(const Duration(minutes: 30)),
-        lifetime: 'dedicated',
-      );
-
-      await prune();
-
-      expect(engine.calls.contains('remove:$inUse'), isFalse);
-    });
-
-    test('does not change the shared cutoff', () async {
-      // A shared container's age means something else — how long reuse
-      // across runs has been paying off — so the dedicated cutoff must not
-      // leak into the shared one: an hour-old shared container stays.
-      final sharedYoungerThanSevenDays = id(
-        's',
-        created: now.subtract(const Duration(hours: 2)),
-      );
-
-      await prune();
-
-      expect(
-        engine.calls.contains('remove:$sharedYoungerThanSevenDays'),
-        isFalse,
-      );
-    });
-
-    test('all still removes a dedicated container regardless of age', () async {
-      final fresh = id(
-        'd',
-        created: now.subtract(const Duration(minutes: 1)),
-        lifetime: 'dedicated',
-      );
-
-      await prune(all: true);
-
-      expect(engine.calls, contains('remove:$fresh'));
-    });
-
-    test('failed still ignores age for a dedicated container', () async {
-      final failed = id(
-        'd',
-        created: now.subtract(const Duration(minutes: 1)),
-        lifetime: 'dedicated',
-      );
-      state
-          .failedMarker(failed)
-          .writeAsStringSync(
-            jsonEncode({'containerId': failed, 'image': 'postgres:16-alpine'}),
-          );
-
-      await prune(failedOnly: true);
-
-      expect(engine.calls, contains('remove:$failed'));
-    });
-
-    test('reports shared and dedicated removals separately', () async {
-      id('shared-old', created: DateTime.utc(2026, 9, 1));
-      id(
-        'dedicated-leaked',
-        created: now.subtract(const Duration(hours: 2)),
-        lifetime: 'dedicated',
-      );
-
-      await prune();
-
-      expect(lines.join('\n'), contains('1 shared, 1 dedicated'));
-    });
-  });
-
-  group('failed', () {
-    test('removes only the containers with a failure marker', () async {
-      final failed = id('f', created: DateTime.utc(2026, 9, 16, 11));
-      final healthy = id('h', created: DateTime.utc(2026, 9, 16, 11));
-      state
-          .failedMarker(failed)
-          .writeAsStringSync(
-            jsonEncode({'containerId': failed, 'image': 'postgres:16-alpine'}),
-          );
-
-      await prune(failedOnly: true);
-
-      expect(engine.calls, contains('remove:$failed'));
-      expect(engine.calls.contains('remove:$healthy'), isFalse);
-    });
-
-    test('deletes the marker afterwards', () async {
-      final failed = id('f', created: DateTime.utc(2026, 9, 16, 11));
-      state.failedMarker(failed).writeAsStringSync('{}');
-
-      await prune(failedOnly: true);
-
-      expect(state.failedMarker(failed).existsSync(), isFalse);
-    });
-
-    test('clears a marker whose container is already gone', () async {
-      state.failedMarker('vanished').writeAsStringSync('{}');
-
-      await prune(failedOnly: true);
-
-      expect(state.failedMarker('vanished').existsSync(), isFalse);
-    });
-  });
-
-  test('never touches a container whose labels are incomplete', () async {
-    // This one reaches the label filter — the marker key is there — but has
-    // no usable identity, so only the parse guard can exclude it. Without a
-    // test of its own, the filter would hide a regression here.
-    final partial = engine.addContainer(
-      labels: {rigMarkerLabel: '1'},
-      created: DateTime.utc(2020, 1, 1),
-    );
-
-    await prune(all: true);
-
-    expect(engine.calls.contains('remove:$partial'), isFalse);
-  });
-
-  test('clears a marker for a vanished container without any flag', () async {
-    state.failedMarker('vanished').writeAsStringSync('{}');
 
     await prune();
 
-    expect(
-      state.failedMarker('vanished').existsSync(),
-      isFalse,
-      reason: 'markers must not pile up through ordinary use',
-    );
-  });
-
-  test('clears failure markers for containers it removed', () async {
-    final old = id('old', created: DateTime.utc(2026, 9, 1));
-    state.failedMarker(old).writeAsStringSync('{}');
-
-    await prune();
-
-    expect(state.failedMarker(old).existsSync(), isFalse);
+    expect(lines.join('\n'), contains('1 shared, 1 dedicated'));
   });
 
   group('suite marker directories', () {
-    // A marker directory is <root>/markers/<kind>/<containerId>/<name>,
-    // written by a module such as rig_postgres's createSuiteDatabase or
-    // rig_redis's claimSuiteIndex. Removing a container takes whatever the
-    // marker was protecting with it, so a marker whose container is gone
-    // protects nothing that still exists — and only prune ever looks at a
-    // container that is no longer live, so only prune can reclaim it.
-    Directory kindDir(String containerId, {String kind = 'postgres'}) =>
-        Directory(p.join(state.markerDir(kind).path, containerId));
-
-    test(
-      'reclaims a marker directory whose container no longer exists',
-      () async {
-        kindDir('vanished').createSync(recursive: true);
-        File(p.join(kindDir('vanished').path, 'test_p_1_deadbeef'))
-            .writeAsStringSync('');
-
-        await prune();
-
-        expect(kindDir('vanished').existsSync(), isFalse);
-      },
-    );
-
-    test(
-      'leaves a marker directory alone while its container is live',
-      () async {
-        final alive = id('alive', created: DateTime.utc(2026, 9, 16, 11, 59));
-        kindDir(alive).createSync(recursive: true);
-
-        await prune();
-
-        expect(kindDir(alive).existsSync(), isTrue);
-      },
-    );
-
-    test(
-      'reclaims a marker directory for a container this same run removes',
-      () async {
-        final removed = id('r', created: DateTime.utc(2026, 9, 1));
-        kindDir(removed).createSync(recursive: true);
-
-        await prune();
-
-        expect(engine.calls, contains('remove:$removed'));
-        expect(kindDir(removed).existsSync(), isFalse);
-      },
-    );
-
     test('reports how many stale marker directories it reclaimed', () async {
-      kindDir('vanished').createSync(recursive: true);
+      // No live container claims this, so pruning reclaims it even though no
+      // container in this run is doomed — the count line still has to say
+      // so.
+      Directory(p.join(state.markerDir('postgres').path, 'vanished'))
+          .createSync(recursive: true);
 
       await prune();
 
       expect(lines.join('\n'), contains('1 stale marker director'));
     });
-
-    test('does nothing when there are no marker directories at all', () async {
-      // The markers root may not exist yet on a machine that has never run
-      // a module that writes one.
-      await expectLater(prune(), completes);
-    });
-
-    test('sweeps markers of every kind for a dead container — including one no '
-        'module in this repo defines — while leaving a live container\'s '
-        'markers of the same kinds alone: the proof that prune decides per '
-        '(kind, containerId) pair rather than knowing what any kind is. '
-        "Without the live container here, an implementation that dropped "
-        "prune's kind level entirely (deleting markers/<kind> wholesale "
-        'whenever the kind name itself is not a known container id) would '
-        'still pass by coincidence.', () async {
-      final alive = id('alive', created: DateTime.utc(2026, 9, 16, 11, 59));
-
-      for (final kind in ['postgres', 'redis', 'somethingelse']) {
-        kindDir('vanished', kind: kind).createSync(recursive: true);
-        kindDir(alive, kind: kind).createSync(recursive: true);
-      }
-
-      await prune();
-
-      for (final kind in ['postgres', 'redis', 'somethingelse']) {
-        expect(
-          kindDir('vanished', kind: kind).existsSync(),
-          isFalse,
-          reason:
-              'a kind hard-coded prune has never heard of must still be '
-              'swept, or this is really just postgres and redis listed by '
-              'name',
-        );
-        expect(
-          kindDir(alive, kind: kind).existsSync(),
-          isTrue,
-          reason:
-              'a live container\'s marker must survive regardless of '
-              'kind, which only holds if prune looks at containerId '
-              'inside each kind rather than at the kind directory itself',
-        );
-      }
-    });
   });
 
   group('networks', () {
-    test('removes a rig network with no containers attached', () async {
-      final netId = engine.addNetwork(
-        name: 'rig-app',
-        labels: {rigMarkerLabel: '1'},
-      );
-
-      await prune(all: true);
-
-      expect(engine.calls, contains('removeNetwork:$netId'));
-      expect(await engine.listNetworks(), isEmpty);
-    });
-
     test('reports the network it removed', () async {
       engine.addNetwork(name: 'rig-app', labels: {rigMarkerLabel: '1'});
 
@@ -389,14 +119,6 @@ void main() {
       expect(lines.join('\n'), contains('1 network(s)'));
     });
 
-    test('never touches a network without rig\'s label', () async {
-      final foreign = engine.addNetwork(name: 'someone-elses-net');
-
-      await prune(all: true);
-
-      expect(engine.calls.contains('removeNetwork:$foreign'), isFalse);
-    });
-
     test(
       'leaves a network with an active endpoint alone, and says so',
       () async {
@@ -411,42 +133,6 @@ void main() {
         expect(
           lines.join('\n'),
           contains('network(s) still in use, not removed: rig-busy'),
-        );
-        final networks = await engine.listNetworks();
-        expect(
-          networks,
-          hasLength(1),
-          reason: 'a network prune could not remove must still be there',
-        );
-      },
-    );
-
-    test(
-      'removes a container and its now-empty network in the same run',
-      () async {
-        // Order matters: if the network were attempted before the container
-        // that made it unremovable, this would incorrectly report it as
-        // still in use.
-        final containerId = id(
-          'old',
-          created: DateTime.utc(2026, 9, 1),
-          network: 'rig-app',
-        );
-        engine.addNetwork(
-          name: 'rig-app',
-          labels: {rigMarkerLabel: '1'},
-          connectedContainerIds: [containerId],
-        );
-
-        await prune();
-
-        expect(engine.calls, contains('remove:$containerId'));
-        expect(await engine.listNetworks(), isEmpty);
-        expect(
-          lines.join('\n'),
-          isNot(contains('still in use')),
-          reason:
-              'the container that made it busy was removed in this same run',
         );
       },
     );

@@ -1,3 +1,11 @@
+## Unreleased
+
+- No behavior change. `rig prune`'s decision logic moved into `rig` as
+  `pruneContainers()`; `runPrune` now only calls it and formats the
+  `PruneResult` it gets back. Kept here: the output wording, the
+  shared/dedicated breakdown line, the still-in-use network line, and
+  `--older-than` parsing.
+
 ## 0.2.0
 
 No functional change in this package. It moves to `rig: ^0.2.0`, because

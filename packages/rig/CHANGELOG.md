@@ -1,3 +1,16 @@
+## Unreleased
+
+- `pruneContainers()` — the decision logic behind `rig prune` moved from
+  `rig_cli` into `rig` itself, and is now exported from `rig.dart`. A
+  project that added only a module such as `rig_postgres`, and never added
+  `rig_cli`, previously had no way to clean up at all; now it can call
+  `pruneContainers()` directly. It returns a `PruneResult` rather than
+  printing — `rig_cli`'s `rig prune` command now just formats it. `all`
+  defaults to `false` for the same reason it always has, stated more
+  bluntly here than in the CLI's `--all` help: a container this removes is
+  *certainly* in use by something, possibly a suite in a different project
+  entirely, since containers are shared across project boundaries.
+
 ## 0.2.0
 
 - **Containers from 0.1.0 are not reused.** Adding a field to `ContainerSpec`

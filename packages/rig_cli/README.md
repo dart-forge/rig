@@ -5,7 +5,11 @@ The `rig` command: see what [rig](../rig) left running, and clean it up.
 rig does not stop the containers it starts. Stopping one would pull it out
 from under another suite that is sharing it, and leaving it means the next run
 starts in about a second instead of paying startup again. The consequence is
-that cleanup is a separate, explicit act — this is the tool for it.
+that cleanup is a separate, explicit act — this is the terminal-facing tool
+for it. The decision logic itself lives in `rig`'s own `pruneContainers()`;
+this command is a thin wrapper that calls it and prints the result, for
+someone who wants `rig prune` at a shell rather than a function call from
+code.
 
 ## rig ls
 

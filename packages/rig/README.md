@@ -64,10 +64,18 @@ What follows from that:
 - **Containers outlive the test run.** rig does not stop them, because
   stopping one would pull it out from under another suite — and because the
   next run then starts in about a second instead of paying startup again.
-- **Cleaning up is a separate, explicit act.** The `rig_cli` package provides
-  a `rig` command: `rig ls` shows what is running, `rig prune` removes shared
-  containers older than seven days, `rig prune --all` removes every container
-  rig created without looking at whether something is using it.
+- **Cleaning up is a separate, explicit act.** `pruneContainers()` does it
+  from code, so a project that only added a module such as `rig_postgres` —
+  and never added `rig_cli` — still has a way to clean up. It defaults to
+  the same safe cutoffs a bare `rig prune` uses (seven days for shared
+  containers, one hour for dedicated ones); `all: true` drops both and
+  removes every container rig ever made, which is only safe to call where
+  nothing else could be relying on one — see its doc comment before reaching
+  for it from a test suite. The `rig_cli` package wraps it in a `rig`
+  command for the terminal: `rig ls` shows what is running, `rig prune`
+  removes shared containers older than seven days, `rig prune --all` removes
+  every container rig created without looking at whether something is using
+  it.
 - **`Lifetime.dedicated`** opts a suite out of sharing when a test genuinely
   needs a server to itself. Those are removed when the suite ends.
 - **Isolation inside a shared container is the module's job.** `rig_postgres`,
