@@ -1,6 +1,6 @@
 name: rig_cli
 description: Command line tool for rig — list and clean up the containers it keeps.
-version: 0.2.0
+version: 0.3.0
 repository: https://github.com/dart-forge/rig
 topics:
   - testing
@@ -18,7 +18,7 @@ executables:
 
 dependencies:
   args: ^2.5.0
-  rig: ^0.2.0
+  rig: ^0.3.0
 
 dev_dependencies:
   lints: ^5.0.0

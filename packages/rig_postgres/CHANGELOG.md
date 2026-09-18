@@ -1,3 +1,8 @@
+## 0.3.0
+
+No functional change in this package. It moves to `rig: ^0.3.0`, because
+`^0.2.0` does not admit rig 0.3.0 and would otherwise hold you to rig 0.2.x.
+
 ## 0.2.0
 
 No functional change in this package. It moves to `rig: ^0.2.0`, because

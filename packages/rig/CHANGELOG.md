@@ -1,4 +1,4 @@
-## Unreleased
+## 0.3.0
 
 - `pruneContainers()` — the decision logic behind `rig prune` moved from
   `rig_cli` into `rig` itself, and is now exported from `rig.dart`. A

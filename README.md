@@ -39,13 +39,13 @@ cleanup and lifetimes.
 
 ## Layout
 
-| | |
-| --- | --- |
-| [packages/rig](packages/rig) | The library. `useContainer`, the wait strategies, the lease. |
-| [packages/rig_postgres](packages/rig_postgres) | Postgres with the authentication method genuinely in force, and a database per suite. |
-| [packages/rig_redis](packages/rig_redis) | Redis with a password that is genuinely enforced. |
-| [packages/rig_cli](packages/rig_cli) | The `rig` command — `ls` and `prune`, because containers are left running on purpose. |
-| [examples/basic-sample](examples/basic-sample) | The smallest thing that shows what rig does. Two test files, run by CI. |
+| | | |
+| --- | --- | --- |
+| [packages/rig](packages/rig) | [![Pub Version](https://img.shields.io/pub/v/rig)](https://pub.dev/packages/rig) | The library. `useContainer`, the wait strategies, the lease. |
+| [packages/rig_postgres](packages/rig_postgres) | [![Pub Version](https://img.shields.io/pub/v/rig_postgres)](https://pub.dev/packages/rig_postgres) | Postgres with the authentication method genuinely in force, and a database per suite. |
+| [packages/rig_redis](packages/rig_redis) | [![Pub Version](https://img.shields.io/pub/v/rig_redis)](https://pub.dev/packages/rig_redis) | Redis with a password that is genuinely enforced, and a database index per suite. |
+| [packages/rig_cli](packages/rig_cli) | [![Pub Version](https://img.shields.io/pub/v/rig_cli)](https://pub.dev/packages/rig_cli) | The `rig` command — `ls` and `prune`, because containers are left running on purpose. |
+| [examples/basic-sample](examples/basic-sample) | — | Runnable examples, paired with real drivers and run by CI. Not published. |
 
 ## Running the tests
 

@@ -1,4 +1,4 @@
-## Unreleased
+## 0.3.0
 
 - No behavior change. `rig prune`'s decision logic moved into `rig` as
   `pruneContainers()`; `runPrune` now only calls it and formats the
