@@ -49,6 +49,17 @@ keeps a long-lived shared container from accumulating databases from
 crashed runs forever. It never touches the container's own database, and
 never touches a database some other suite still has open.
 
+## Installing
+
+```bash
+dart pub add dev:rig_postgres
+```
+
+It brings [rig](https://pub.dev/packages/rig) with it. Containers are left
+running on purpose, so you will also want
+[rig_cli](https://pub.dev/packages/rig_cli) for the `rig` command that removes
+them.
+
 ## Testing
 
 ```bash

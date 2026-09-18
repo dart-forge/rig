@@ -68,6 +68,17 @@ reuses it instead of paying for startup again. Nothing in this package stops
 or removes it; only `rig prune` does. Ask for `lifetime: Lifetime.dedicated`
 when a suite would disturb others sharing the container.
 
+## Installing
+
+```bash
+dart pub add dev:rig_redis
+```
+
+It brings [rig](https://pub.dev/packages/rig) with it. Containers are left
+running on purpose, so you will also want
+[rig_cli](https://pub.dev/packages/rig_cli) for the `rig` command that removes
+them.
+
 ## Testing
 
 ```bash

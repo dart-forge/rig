@@ -73,4 +73,7 @@ already running.
 
 ## Status
 
-In development, not yet published to pub.dev.
+Published on pub.dev: [rig](https://pub.dev/packages/rig),
+[rig_postgres](https://pub.dev/packages/rig_postgres),
+[rig_redis](https://pub.dev/packages/rig_redis),
+[rig_cli](https://pub.dev/packages/rig_cli). The four are released together.

@@ -68,11 +68,13 @@ to live in, before every module moved under `~/.rig/markers/<kind>`. They
 hold nothing but empty files and directories at this point and can be
 deleted.
 
-## Status
-
-In development, not yet published to pub.dev. Until then, install it from a
-checkout:
+## Installing
 
 ```bash
-dart pub global activate -s path path/to/rig/packages/rig_cli
+dart pub global activate rig_cli
 ```
+
+This is a command, not a library, so it is installed globally rather than
+added to a package's dependencies. Nothing in [rig](https://pub.dev/packages/rig)
+or its modules pulls it in — which means you have to install it deliberately
+before there is anything to clean up with.

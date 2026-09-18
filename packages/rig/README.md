@@ -193,15 +193,15 @@ tell when it is ready, and how to keep suites from treading on each other.
 - [`rig_postgres`](../rig_postgres) — Postgres with the authentication method
   genuinely in force, and a database per suite.
 
-## Status
+## Installing
 
-In development, not yet published to pub.dev. Until it is, depend on it by
-path alongside a checkout of this repository:
+rig is only ever a test dependency — nothing in your shipped code imports it.
 
-```yaml
-dev_dependencies:
-  rig: any
-dependency_overrides:
-  rig:
-    path: ../rig/packages/rig
+```bash
+dart pub add dev:rig
 ```
+
+For Postgres reach for [rig_postgres](https://pub.dev/packages/rig_postgres)
+rather than building the spec yourself, and add
+[rig_cli](https://pub.dev/packages/rig_cli) to get the `rig` command that
+lists and removes the containers left behind.
