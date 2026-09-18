@@ -98,14 +98,26 @@ Future<int> runPrune({
       clearedSuiteDirs == 0) {
     out('Nothing to remove.');
   } else {
+    // "failure marker" and "marker directory" are deliberately different
+    // words: the first is the file recording that a run failed, the second is
+    // what a module writes to claim something inside a container. Calling
+    // both "marker" made the line ambiguous once modules got their own.
     final extras = [
       if (networkResult.removed > 0) '${networkResult.removed} network(s)',
-      if (clearedMarkers > 0) '$clearedMarkers stale marker(s)',
+      if (clearedMarkers > 0) '$clearedMarkers stale failure marker(s)',
       if (clearedSuiteDirs > 0)
-        '$clearedSuiteDirs stale suite '
+        '$clearedSuiteDirs stale marker '
             'director${clearedSuiteDirs == 1 ? 'y' : 'ies'}',
     ];
-    final suffix = extras.isEmpty ? '' : ' and ${extras.join(' and ')}';
+    final suffix = switch (extras.length) {
+      0 => '',
+      1 => ' and ${extras.single}',
+      // Commas up to the last one, so three items do not read as a chain of
+      // "and"s.
+      _ =>
+        ', ${extras.take(extras.length - 1).join(', ')} '
+            'and ${extras.last}',
+    };
     final breakdown = doomed.isEmpty
         ? ''
         : ' ($sharedRemoved shared, $dedicatedRemoved dedicated)';

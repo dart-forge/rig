@@ -308,12 +308,12 @@ void main() {
       },
     );
 
-    test('reports how many stale suite directories it reclaimed', () async {
+    test('reports how many stale marker directories it reclaimed', () async {
       kindDir('vanished').createSync(recursive: true);
 
       await prune();
 
-      expect(lines.join('\n'), contains('1 stale suite director'));
+      expect(lines.join('\n'), contains('1 stale marker director'));
     });
 
     test('does nothing when there are no marker directories at all', () async {
