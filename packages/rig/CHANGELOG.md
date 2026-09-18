@@ -30,3 +30,9 @@ First release.
   The file named by `ContainerBuild.dockerfile` is always sent even if
   `.dockerignore` excludes it. A pattern rig cannot interpret (currently a
   character class such as `[a-z]`) throws rather than being sent anyway.
+- `StateDir.markerDir(kind)` replaces `StateDir.suitesDir`: every module that
+  records what it holds inside a container now files its markers under
+  `markers/<kind>/<containerId>/<name>`, so `rig prune` can sweep them all
+  without knowing what any kind means. `kind` is validated as a plain
+  lowercase token (letters, digits, `_`, `-`) so it cannot be used to escape
+  the state directory as a path segment.

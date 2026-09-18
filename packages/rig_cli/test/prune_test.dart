@@ -261,64 +261,102 @@ void main() {
   });
 
   group('suite marker directories', () {
-    // A suite marker directory is <suitesDir>/<containerId>/<database>,
-    // written by rig_postgres's createSuiteDatabase. Removing a container
-    // takes its tmpfs PGDATA with it, so a marker whose container is gone
+    // A marker directory is <root>/markers/<kind>/<containerId>/<name>,
+    // written by a module such as rig_postgres's createSuiteDatabase or
+    // rig_redis's claimSuiteIndex. Removing a container takes whatever the
+    // marker was protecting with it, so a marker whose container is gone
     // protects nothing that still exists — and only prune ever looks at a
     // container that is no longer live, so only prune can reclaim it.
-    Directory suiteDir(String containerId) =>
-        Directory(p.join(state.suitesDir.path, containerId));
+    Directory kindDir(String containerId, {String kind = 'postgres'}) =>
+        Directory(p.join(state.markerDir(kind).path, containerId));
 
     test(
-      'reclaims a suite directory whose container no longer exists',
+      'reclaims a marker directory whose container no longer exists',
       () async {
-        suiteDir('vanished').createSync(recursive: true);
-        File(p.join(suiteDir('vanished').path, 'test_p_1_deadbeef'))
+        kindDir('vanished').createSync(recursive: true);
+        File(p.join(kindDir('vanished').path, 'test_p_1_deadbeef'))
             .writeAsStringSync('');
 
         await prune();
 
-        expect(suiteDir('vanished').existsSync(), isFalse);
+        expect(kindDir('vanished').existsSync(), isFalse);
       },
     );
 
     test(
-      'leaves a suite directory alone while its container is live',
+      'leaves a marker directory alone while its container is live',
       () async {
         final alive = id('alive', created: DateTime.utc(2026, 9, 16, 11, 59));
-        suiteDir(alive).createSync(recursive: true);
+        kindDir(alive).createSync(recursive: true);
 
         await prune();
 
-        expect(suiteDir(alive).existsSync(), isTrue);
+        expect(kindDir(alive).existsSync(), isTrue);
       },
     );
 
     test(
-      'reclaims a suite directory for a container this same run removes',
+      'reclaims a marker directory for a container this same run removes',
       () async {
         final removed = id('r', created: DateTime.utc(2026, 9, 1));
-        suiteDir(removed).createSync(recursive: true);
+        kindDir(removed).createSync(recursive: true);
 
         await prune();
 
         expect(engine.calls, contains('remove:$removed'));
-        expect(suiteDir(removed).existsSync(), isFalse);
+        expect(kindDir(removed).existsSync(), isFalse);
       },
     );
 
     test('reports how many stale suite directories it reclaimed', () async {
-      suiteDir('vanished').createSync(recursive: true);
+      kindDir('vanished').createSync(recursive: true);
 
       await prune();
 
       expect(lines.join('\n'), contains('1 stale suite director'));
     });
 
-    test('does nothing when there are no suite directories at all', () async {
-      // suitesDir may not exist yet on a machine that has never run a
-      // module built on createSuiteDatabase.
+    test('does nothing when there are no marker directories at all', () async {
+      // The markers root may not exist yet on a machine that has never run
+      // a module that writes one.
       await expectLater(prune(), completes);
+    });
+
+    test('sweeps markers of every kind for a dead container — including one no '
+        'module in this repo defines — while leaving a live container\'s '
+        'markers of the same kinds alone: the proof that prune decides per '
+        '(kind, containerId) pair rather than knowing what any kind is. '
+        "Without the live container here, an implementation that dropped "
+        "prune's kind level entirely (deleting markers/<kind> wholesale "
+        'whenever the kind name itself is not a known container id) would '
+        'still pass by coincidence.', () async {
+      final alive = id('alive', created: DateTime.utc(2026, 9, 16, 11, 59));
+
+      for (final kind in ['postgres', 'redis', 'somethingelse']) {
+        kindDir('vanished', kind: kind).createSync(recursive: true);
+        kindDir(alive, kind: kind).createSync(recursive: true);
+      }
+
+      await prune();
+
+      for (final kind in ['postgres', 'redis', 'somethingelse']) {
+        expect(
+          kindDir('vanished', kind: kind).existsSync(),
+          isFalse,
+          reason:
+              'a kind hard-coded prune has never heard of must still be '
+              'swept, or this is really just postgres and redis listed by '
+              'name',
+        );
+        expect(
+          kindDir(alive, kind: kind).existsSync(),
+          isTrue,
+          reason:
+              'a live container\'s marker must survive regardless of '
+              'kind, which only holds if prune looks at containerId '
+              'inside each kind rather than at the kind directory itself',
+        );
+      }
     });
   });
 

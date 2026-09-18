@@ -184,20 +184,34 @@ int _clearMarkers(StateDir stateDir, {required Set<String> forIds}) {
   return cleared;
 }
 
-/// Removes every subdirectory of [StateDir.suitesDir] whose name — a
-/// container id — is not in [knownIds], and reports how many it removed.
+/// Removes every container-id subdirectory, under every kind directory in
+/// the markers root, whose name is not in [knownIds], and reports how many
+/// it removed.
 ///
-/// Only prune ever looks at a container that is no longer live, so only
-/// prune can tell a marker directory left behind by a `SIGKILL`ed suite from
-/// one still protecting a database that exists.
+/// Deliberately does not know what any kind means, or even what kinds
+/// exist: it lists whatever subdirectories `markers/` happens to have and
+/// sweeps each one's container-id children the same way. That is the whole
+/// point of the `markers/<kind>/<containerId>/<name>` layout — a module
+/// adding a new kind needs no change here. Only prune ever looks at a
+/// container that is no longer live, so only prune can tell a marker
+/// directory left behind by a `SIGKILL`ed suite from one still protecting a
+/// resource that exists.
 int _clearSuiteDirs(StateDir stateDir, {required Set<String> knownIds}) {
-  if (!stateDir.suitesDir.existsSync()) return 0;
+  final markersRoot = Directory(p.join(stateDir.root.path, 'markers'));
+  if (!markersRoot.existsSync()) return 0;
   var cleared = 0;
-  for (final entry in stateDir.suitesDir.listSync()) {
-    if (entry is! Directory) continue;
-    if (knownIds.contains(p.basename(entry.path))) continue;
-    entry.deleteSync(recursive: true);
-    cleared++;
+  for (final kindDir in markersRoot.listSync()) {
+    if (kindDir is! Directory) continue;
+    for (final entry in kindDir.listSync()) {
+      if (entry is! Directory) continue;
+      if (knownIds.contains(p.basename(entry.path))) continue;
+      entry.deleteSync(recursive: true);
+      cleared++;
+    }
+    // An empty kind directory left behind is harmless — the next marker of
+    // that kind recreates it — so there is nothing gained by also removing
+    // it here, and doing so would just be more code sharing this method's
+    // one job.
   }
   return cleared;
 }

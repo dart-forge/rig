@@ -85,7 +85,7 @@ File suiteMarkerFile({
   required StateDir stateDir,
   required String containerId,
   required String database,
-}) => File(p.join(stateDir.suitesDir.path, containerId, database));
+}) => File(p.join(stateDir.markerDir('postgres').path, containerId, database));
 
 /// The suite's own database could not be created.
 final class SuiteDatabaseNotCreated extends RigException {

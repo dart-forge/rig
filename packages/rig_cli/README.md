@@ -63,6 +63,11 @@ Pruning also collects the marker files modules leave behind to claim
 resources inside a shared container, so a module's own bookkeeping does not
 outlive the containers it refers to.
 
+`~/.rig/suites` and `~/.rig/redis` are the old locations these markers used
+to live in, before every module moved under `~/.rig/markers/<kind>`. They
+hold nothing but empty files and directories at this point and can be
+deleted.
+
 ## Status
 
 In development, not yet published to pub.dev. Until then, install it from a

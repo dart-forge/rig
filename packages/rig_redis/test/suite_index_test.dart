@@ -24,25 +24,23 @@ void main() {
   tearDown(() => tmp.deleteSync(recursive: true));
 
   group('suiteIndexMarker', () {
-    test(
-      'lives under <stateDir>/redis/<containerId>/<index>, not suitesDir',
-      () {
-        final marker = suiteIndexMarker(
-          stateDir: stateDir,
-          containerId: 'abc',
-          index: 3,
-        );
+    test('lives under <stateDir>/markers/redis/<containerId>/<index>, not '
+        "under rig_postgres's own kind", () {
+      final marker = suiteIndexMarker(
+        stateDir: stateDir,
+        containerId: 'abc',
+        index: 3,
+      );
 
-        expect(marker.path, p.join(tmp.path, 'redis', 'abc', '3'));
-        expect(
-          p.isWithin(stateDir.suitesDir.path, marker.path),
-          isFalse,
-          reason:
-              'a Redis index is recycled by this module on its own schedule, '
-              'not the one rig prune sweeps suitesDir on',
-        );
-      },
-    );
+      expect(marker.path, p.join(tmp.path, 'markers', 'redis', 'abc', '3'));
+      expect(
+        p.isWithin(stateDir.markerDir('postgres').path, marker.path),
+        isFalse,
+        reason:
+            'a Redis index is recycled by this module on its own schedule, '
+            "and must not land under rig_postgres's kind",
+      );
+    });
   });
 
   group('claimSuiteIndex', () {

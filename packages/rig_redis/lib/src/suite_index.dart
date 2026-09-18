@@ -21,21 +21,20 @@ const Duration defaultMarkerStaleAfter = Duration(hours: 24);
 /// Where the marker recording that a suite has claimed [index] inside
 /// [containerId] lives.
 ///
-/// Deliberately not under [StateDir.suitesDir]. That directory's contract —
-/// the one `rig prune` sweeps by — is "a subdirectory whose container is
-/// gone can be removed", which is right for `rig_postgres`: every suite
-/// database there has a name unique to that suite, so nothing is ever
-/// waiting to reuse one. A Redis index is the opposite — it is one of a
-/// small fixed set of numbers the *next* suite on this same container is
-/// meant to reuse, reclaimed the moment a new suite actually needs it rather
-/// than on `rig prune`'s schedule. Filing it next to `rig_postgres`'s
-/// markers, under a directory whose name promises something that is not
-/// true here, would be the wrong kind of reuse.
+/// Filed under [StateDir.markerDir]'s `'redis'` kind, which namespaces it
+/// from `rig_postgres`'s own markers rather than sharing a directory with
+/// them. The two protect different things — a suite database has a name
+/// unique to that suite, while a Redis index is one of a small fixed set of
+/// numbers the *next* suite on this same container is meant to reuse,
+/// reclaimed the moment a new suite needs it rather than on `rig prune`'s
+/// schedule — but `prune` itself sweeps every kind's container-id
+/// subdirectories the same way, without knowing what either kind means, so
+/// that difference never has to be a difference in where the marker lives.
 File suiteIndexMarker({
   required StateDir stateDir,
   required String containerId,
   required int index,
-}) => File(p.join(stateDir.root.path, 'redis', containerId, '$index'));
+}) => File(p.join(stateDir.markerDir('redis').path, containerId, '$index'));
 
 /// Every database index this container was started with is already claimed
 /// by a marker that has not gone stale.

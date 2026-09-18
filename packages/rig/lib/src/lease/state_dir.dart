@@ -33,16 +33,36 @@ final class StateDir {
   /// mounts a certificate keeps the same hash between runs.
   Directory get certsDir => Directory(p.join(root.path, 'certs'));
 
-  /// Where a running suite's per-database markers live, one subdirectory per
-  /// container id. A module (rig_postgres is the first) writes into this to
-  /// say "this database is still mine" across isolates; `rig prune` removes
-  /// a subdirectory once its container is no longer known to the daemon,
-  /// since removing a container takes whatever that marker was protecting
-  /// with it.
-  Directory get suitesDir => Directory(p.join(root.path, 'suites'));
+  /// Where a module records what it is holding inside a container.
+  ///
+  /// [kind] namespaces one module's markers from another's — `rig_postgres`
+  /// uses `'postgres'`, `rig_redis` uses `'redis'`. A module writes into this
+  /// to say "this resource inside the container is still mine" across
+  /// isolates (`dart test` gives every suite file its own, so the filesystem
+  /// is the one channel every isolate in a run can see); `rig prune` removes
+  /// a container-id subdirectory once its container is no longer known to
+  /// the daemon, since removing a container takes whatever that marker was
+  /// protecting with it. `prune` sweeps `markers/*/<containerId>` without
+  /// knowing any kind, so a new module needs no change there — which is the
+  /// point of this layout.
+  Directory markerDir(String kind) {
+    if (!_kindPattern.hasMatch(kind)) {
+      throw ArgumentError.value(
+        kind,
+        'kind',
+        'must be lowercase letters, digits, "_" or "-" only, so it cannot '
+            'escape the state directory as a path segment',
+      );
+    }
+    return Directory(p.join(root.path, 'markers', kind));
+  }
 
   void ensure() {
     Directory(p.join(root.path, 'locks')).createSync(recursive: true);
     failedDir.createSync(recursive: true);
   }
 }
+
+/// Non-empty, and safe as a single path segment: no `/` or `..` that could
+/// walk a marker outside the state directory.
+final RegExp _kindPattern = RegExp(r'^[a-z0-9_-]+$');

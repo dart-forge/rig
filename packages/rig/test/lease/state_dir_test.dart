@@ -16,7 +16,7 @@ void main() {
     expect(dir.root.path, '/Users/x/.rig');
   });
 
-  test('lays out locks, failed markers, certs and suite markers', () {
+  test('lays out locks, failed markers, certs and per-kind markers', () {
     final dir = StateDir(Directory(tmp.path));
 
     expect(dir.lockPath('abc123'), p.join(tmp.path, 'locks', 'abc123.lock'));
@@ -26,7 +26,43 @@ void main() {
     );
     expect(dir.failedDir.path, p.join(tmp.path, 'failed'));
     expect(dir.certsDir.path, p.join(tmp.path, 'certs'));
-    expect(dir.suitesDir.path, p.join(tmp.path, 'suites'));
+    expect(
+      dir.markerDir('postgres').path,
+      p.join(tmp.path, 'markers', 'postgres'),
+    );
+    expect(dir.markerDir('redis').path, p.join(tmp.path, 'markers', 'redis'));
+  });
+
+  group('markerDir kind validation', () {
+    // kind becomes a path segment under root, so anything that could walk
+    // out of the state directory — or that simply is not the plain
+    // lowercase token every kind is meant to be — must be rejected here
+    // rather than reaching the filesystem.
+    final dir = StateDir(Directory('/does/not/matter'));
+
+    test('rejects a kind containing ".."', () {
+      expect(() => dir.markerDir('..'), throwsArgumentError);
+      expect(() => dir.markerDir('../etc'), throwsArgumentError);
+      expect(() => dir.markerDir('postgres/..'), throwsArgumentError);
+    });
+
+    test('rejects a kind containing a slash', () {
+      expect(() => dir.markerDir('postgres/x'), throwsArgumentError);
+      expect(() => dir.markerDir('/postgres'), throwsArgumentError);
+    });
+
+    test('rejects a kind with uppercase letters', () {
+      expect(() => dir.markerDir('Postgres'), throwsArgumentError);
+    });
+
+    test('rejects an empty kind', () {
+      expect(() => dir.markerDir(''), throwsArgumentError);
+    });
+
+    test('accepts lowercase letters, digits, underscore and hyphen', () {
+      expect(() => dir.markerDir('postgres'), returnsNormally);
+      expect(() => dir.markerDir('redis-cache_2'), returnsNormally);
+    });
   });
 
   test('ensure creates the tree and is safe to call twice', () {
