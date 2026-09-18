@@ -101,6 +101,17 @@ final class PruneResult {
 /// containers are shared across project boundaries, not only across suites
 /// in this one. Reach for it only where that is exactly what you mean;
 /// otherwise leave the age-based defaults to do the safe thing.
+///
+/// One more hazard, which has nothing to do with [all]: this asks [engine]
+/// what containers exist and treats every marker directory naming a
+/// container it does not know as orphaned. That is right when the daemon is
+/// the one those containers live on, and quietly wrong when it is not. Prune
+/// against the wrong daemon — a `DOCKER_HOST` pointing elsewhere, a
+/// different context — and the markers protecting live containers on the
+/// right one are removed, which leaves the resources they were claiming
+/// unprotected from a later sweep. Nothing detects this; the markers simply
+/// look like garbage. Pass an [engine] only when you know which daemon it
+/// is talking to.
 Future<PruneResult> pruneContainers({
   Duration olderThan = const Duration(days: 7),
   Duration dedicatedOlderThan = const Duration(hours: 1),
