@@ -1,3 +1,17 @@
+## Unreleased
+
+- `ContainerSpec.files` places files inside the container **before it
+  starts**, for a server that reads its configuration at startup — too late
+  for `ContainerLease.putFile`, and unlike a bind mount, without the host's
+  ownership coming along for the ride. Each `ContainerFile` carries its own
+  `mode`, `uid`, and `gid`; `uid`/`gid` must be numeric ids, since Docker
+  ignores a tar entry's user/group name. Only the file itself is ever
+  written — never a directory entry for its parents, which would overwrite
+  an existing directory's own mode and owner. Folded into the configuration
+  hash by path, mode, uid, gid, and content, the same way a mount's content
+  is; two files at the same path throw rather than silently picking a
+  winner.
+
 ## 0.1.0
 
 First release.

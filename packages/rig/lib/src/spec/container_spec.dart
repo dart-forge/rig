@@ -38,6 +38,47 @@ int compareMounts(Mount a, Mount b) {
   return a.hostPath.compareTo(b.hostPath);
 }
 
+/// A file placed inside the container before it starts.
+///
+/// Exists because a server that reads its configuration at startup cannot be
+/// reached by `ContainerLease.putFile`: that writes into a container that is
+/// already running, which is too late for anything read once, at boot. The
+/// other way to get a file in ahead of time is a bind mount, and a mount
+/// brings the *host's* ownership with it — a file meant for a non-root
+/// process inside the container can come through unreadable, the same
+/// problem `putFile`'s own `uid`/`gid` parameters exist to avoid. This is
+/// that fix, applied before the container ever starts.
+///
+/// [uid] and [gid] must be numeric ids, not names: Docker ignores a tar
+/// entry's `uname`/`gname` and only ever applies the numeric `uid`/`gid` it
+/// carries (measured against a real daemon — see the design this
+/// implements). rig has no way to resolve a name to a number for an
+/// arbitrary image, so the caller has to know the numeric id their image
+/// actually runs as.
+final class ContainerFile {
+  const ContainerFile(
+    this.path,
+    this.content, {
+    this.mode = '644',
+    this.uid = 0,
+    this.gid = 0,
+  });
+
+  /// Absolute path inside the container.
+  final String path;
+
+  final List<int> content;
+
+  /// POSIX permission bits as a 3- or 4-digit octal string, e.g. `'644'` or
+  /// `'4755'` — the same convention `ContainerLease.putFile` uses, and for
+  /// the same reason: Dart has no octal literal.
+  final String mode;
+
+  /// See this class's doc comment for why these must be numbers.
+  final int uid;
+  final int gid;
+}
+
 /// A health probe rig installs when creating the container.
 ///
 /// Most official images ship no HEALTHCHECK, so rig adds one at create time
@@ -134,6 +175,7 @@ final class ContainerSpec {
     this.exposedPorts = const [],
     this.tmpfs = const {},
     this.mounts = const [],
+    this.files = const [],
     this.labels = const {},
     this.user,
     this.workingDir,
@@ -167,6 +209,11 @@ final class ContainerSpec {
 
   final Set<String> tmpfs;
   final List<Mount> mounts;
+
+  /// Files written into the container between create and start — see
+  /// [ContainerFile]'s doc comment for why this exists alongside [mounts]
+  /// and `ContainerLease.putFile`.
+  final List<ContainerFile> files;
 
   /// Labels for the caller's own use. rig adds its own on top and excludes
   /// these from the hash, so tagging a container never splits sharing.
@@ -206,6 +253,7 @@ final class ContainerSpec {
     List<int>? exposedPorts,
     Set<String>? tmpfs,
     List<Mount>? mounts,
+    List<ContainerFile>? files,
     Map<String, String>? labels,
     String? user,
     String? workingDir,
@@ -225,6 +273,7 @@ final class ContainerSpec {
       exposedPorts: exposedPorts ?? this.exposedPorts,
       tmpfs: tmpfs ?? this.tmpfs,
       mounts: mounts ?? this.mounts,
+      files: files ?? this.files,
       labels: labels ?? this.labels,
       user: user ?? this.user,
       workingDir: workingDir ?? this.workingDir,

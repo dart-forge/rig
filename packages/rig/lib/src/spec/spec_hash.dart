@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import '../engine/tar.dart';
+import '../errors.dart';
 import 'container_spec.dart';
 
 /// Mounted files up to this size are hashed by content; larger ones by size
@@ -29,6 +30,7 @@ String specHash(
   final lines = [
     ...normalizeSpec(spec).canonicalLines,
     ..._mountContentLines(spec, maxMountBytes),
+    ..._fileLines(spec.files),
     ..._buildContextLines(spec.build, maxMountBytes),
   ];
   final digest = sha256.convert(utf8.encode(_unambiguous(lines)));
@@ -62,6 +64,33 @@ List<String> _mountContentLines(ContainerSpec spec, int maxBytes) {
   return [
     for (final mount in sorted)
       'mount.content=${mount.containerPath}=${_digestOf(mount.hostPath, maxBytes)}',
+  ];
+}
+
+/// Folds `ContainerSpec.files` in by path, mode, uid, gid and content, the
+/// same reason [_mountContentLines] folds a mount's content in: a file that
+/// is part of what the container starts up with must stop matching a
+/// container running with different content, ownership, or mode.
+///
+/// Sorted by path first, so declaration order cannot move the hash — the
+/// same reasoning [_mountContentLines] applies via [compareMounts]. Sorting
+/// first is also what makes two files sharing a path detectable as
+/// *adjacent* entries, which is what the throw below checks: which one
+/// would actually reach the container is an accident of list order, not a
+/// choice anyone made, so this refuses to pick a winner silently.
+List<String> _fileLines(List<ContainerFile> files) {
+  final sorted = files.toList()..sort((a, b) => a.path.compareTo(b.path));
+
+  for (var i = 1; i < sorted.length; i++) {
+    if (sorted[i].path == sorted[i - 1].path) {
+      throw DuplicateContainerFilePath(path: sorted[i].path);
+    }
+  }
+
+  return [
+    for (final file in sorted)
+      'file=${file.path}=mode:${file.mode}:uid:${file.uid}:gid:${file.gid}:'
+          '${sha256.convert(file.content).toString()}',
   ];
 }
 

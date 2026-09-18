@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -265,6 +266,106 @@ void main() {
       );
 
       expect(specHash(one), specHash(two));
+    });
+  });
+
+  group('files', () {
+    test('changes when a file\'s content changes', () {
+      final before = ContainerSpec(
+        image: 'x',
+        waitFor: const WaitFor.healthy(),
+        files: [ContainerFile('/etc/app.conf', utf8.encode('FIRST'))],
+      );
+      final after = ContainerSpec(
+        image: 'x',
+        waitFor: const WaitFor.healthy(),
+        files: [ContainerFile('/etc/app.conf', utf8.encode('SECOND'))],
+      );
+
+      expect(specHash(before), isNot(specHash(after)));
+    });
+
+    test('changes when only the mode differs, content unchanged', () {
+      final a = ContainerSpec(
+        image: 'x',
+        waitFor: const WaitFor.healthy(),
+        files: [ContainerFile('/etc/app.conf', utf8.encode('SAME'))],
+      );
+      final b = ContainerSpec(
+        image: 'x',
+        waitFor: const WaitFor.healthy(),
+        files: [
+          ContainerFile('/etc/app.conf', utf8.encode('SAME'), mode: '600'),
+        ],
+      );
+
+      expect(specHash(a), isNot(specHash(b)));
+    });
+
+    test('changes when only uid or gid differs, content unchanged', () {
+      final a = ContainerSpec(
+        image: 'x',
+        waitFor: const WaitFor.healthy(),
+        files: [ContainerFile('/etc/app.conf', utf8.encode('SAME'))],
+      );
+      final b = ContainerSpec(
+        image: 'x',
+        waitFor: const WaitFor.healthy(),
+        files: [
+          ContainerFile(
+            '/etc/app.conf',
+            utf8.encode('SAME'),
+            uid: 1000,
+            gid: 1000,
+          ),
+        ],
+      );
+
+      expect(specHash(a), isNot(specHash(b)));
+    });
+
+    test('does not change when only the declaration order changes', () {
+      final a = ContainerSpec(
+        image: 'x',
+        waitFor: const WaitFor.healthy(),
+        files: [
+          ContainerFile('/a.txt', utf8.encode('A')),
+          ContainerFile('/b.txt', utf8.encode('B')),
+        ],
+      );
+      final b = ContainerSpec(
+        image: 'x',
+        waitFor: const WaitFor.healthy(),
+        files: [
+          ContainerFile('/b.txt', utf8.encode('B')),
+          ContainerFile('/a.txt', utf8.encode('A')),
+        ],
+      );
+
+      expect(specHash(a), specHash(b));
+    });
+
+    test('two files at the same path throw, rather than picking a winner '
+        'silently', () {
+      final spec = ContainerSpec(
+        image: 'x',
+        waitFor: const WaitFor.healthy(),
+        files: [
+          ContainerFile('/etc/app.conf', utf8.encode('A')),
+          ContainerFile('/etc/app.conf', utf8.encode('B')),
+        ],
+      );
+
+      expect(
+        () => specHash(spec),
+        throwsA(
+          isA<DuplicateContainerFilePath>().having(
+            (e) => e.path,
+            'path',
+            '/etc/app.conf',
+          ),
+        ),
+      );
     });
   });
 

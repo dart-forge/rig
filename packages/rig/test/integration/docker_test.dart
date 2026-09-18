@@ -435,6 +435,53 @@ void main() {
     }, timeout: const Timeout(Duration(minutes: 3)));
   });
 
+  group('ContainerSpec.files', () {
+    test('a declared file is already there when the container starts — read '
+        "by the container's own command, at startup, not by exec afterwards "
+        '(which would also pass if the file had arrived late)', () async {
+      final marker = 'files-startup-$runId';
+      final spec = ContainerSpec(
+        image: 'alpine:3.20',
+        // The command reads the file as its very first act. If the file
+        // is placed after start rather than before, this either prints
+        // nothing (cat fails silently under sh -c's default) or fails
+        // outright — either way the marker below would not appear.
+        command: const [
+          'sh',
+          '-c',
+          'echo "startup saw: \$(cat /etc/rigapp/deep/config.txt)"; '
+              'sleep 300',
+        ],
+        labels: {_ownLabel: runId},
+        healthcheck: const Healthcheck(
+          test: ['CMD-SHELL', 'true'],
+          interval: Duration(milliseconds: 250),
+          retries: 20,
+        ),
+        waitFor: const WaitFor.healthy(timeout: Duration(seconds: 60)),
+        // A deep path with no existing directory in the alpine image:
+        // Docker has to create etc/rigapp/deep itself, since rig never
+        // sends a directory entry for any of them.
+        files: [
+          ContainerFile('/etc/rigapp/deep/config.txt', utf8.encode(marker)),
+        ],
+      );
+
+      final acquired = await acquire(spec);
+      final lease = ContainerLease.of(engine, acquired);
+
+      final tail = await lease.logTail();
+      // Printed for the record, per the design this implements: this is
+      // the only evidence in the repository that the file was in place
+      // before the container's own command ran, not merely present by
+      // the time something later went looking for it.
+      // ignore: avoid_print
+      print('logTail:\n$tail');
+
+      expect(tail, contains('startup saw: $marker'));
+    }, timeout: const Timeout(Duration(minutes: 3)));
+  });
+
   test(
     'waits on a log message from a container that never opens a port',
     () async {

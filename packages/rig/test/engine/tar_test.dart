@@ -377,6 +377,82 @@ void main() {
     });
   });
 
+  group('filesArchive', () {
+    test('holds only a file entry for a deep path — no entry for any of its '
+        'parent directories', () {
+      final files = [
+        ContainerFile(
+          '/etc/rigapp/deep/config.yaml',
+          utf8.encode('key: value'),
+        ),
+      ];
+
+      final entries = readTarEntries(filesArchive(files));
+
+      expect(entries, hasLength(1));
+      expect(
+        entries.any((e) => e.isDirectory),
+        isFalse,
+        reason:
+            'a directory entry for an existing path (e.g. /etc) would '
+            "overwrite that directory's own mode and owner — see "
+            "filesArchive's doc comment for the measured failure",
+      );
+      expect(entries.single.name, 'etc/rigapp/deep/config.yaml');
+      expect(entries.single.isRegularFile, isTrue);
+      expect(utf8.decode(entries.single.content), 'key: value');
+    });
+
+    test('a leading slash is stripped, not sent as part of the entry name', () {
+      final entries = readTarEntries(
+        filesArchive([ContainerFile('/top.txt', utf8.encode('x'))]),
+      );
+
+      expect(entries.single.name, 'top.txt');
+    });
+
+    test(
+      "writes each file's own mode, uid, and gid into its header — checked "
+      'through the real tar binary, the same way singleFileArchive is above',
+      () async {
+        final files = [
+          ContainerFile(
+            '/a.conf',
+            utf8.encode('a'),
+            mode: '640',
+            uid: 1000,
+            gid: 2000,
+          ),
+          ContainerFile('/b.conf', utf8.encode('b'), mode: '755'),
+        ];
+
+        final listing = await _listWithRealTar(filesArchive(files));
+        final lines = listing.split('\n');
+
+        final aLine = lines.firstWhere((l) => l.contains('a.conf'));
+        expect(aLine, startsWith('-rw-r-----')); // 640
+        expect(aLine, matches(RegExp(r'\b1000[/\s]+2000\b')));
+
+        final bLine = lines.firstWhere((l) => l.contains('b.conf'));
+        expect(bLine, startsWith('-rwxr-xr-x')); // 755
+        // Default uid/gid is 0:0.
+        expect(bLine, matches(RegExp(r'\b0[/\s]+0\b')));
+      },
+    );
+
+    test('multiple files at unrelated paths all round-trip', () {
+      final files = [
+        ContainerFile('/a.txt', utf8.encode('A')),
+        ContainerFile('/sub/b.txt', utf8.encode('B')),
+      ];
+
+      final entries = readTarEntries(filesArchive(files));
+
+      expect(entries.map((e) => e.name), ['a.txt', 'sub/b.txt']);
+      expect(entries.every((e) => e.isRegularFile), isTrue);
+    });
+  });
+
   group('parseFileMode', () {
     test('accepts 3 and 4 octal digits', () {
       expect(parseFileMode('644'), 0x1A4);

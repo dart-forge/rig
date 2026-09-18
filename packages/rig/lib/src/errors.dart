@@ -360,6 +360,23 @@ final class UnexpectedArchiveContents extends RigException {
       'This usually means the path names a directory, not a file.';
 }
 
+/// `ContainerSpec.files` names the same container path twice.
+///
+/// Which of the two would actually land is an artifact of list order and a
+/// tar writer's own iteration, not a decision anyone made on purpose — so
+/// this throws rather than silently letting one shadow the other.
+final class DuplicateContainerFilePath extends RigException {
+  const DuplicateContainerFilePath({required this.path});
+
+  final String path;
+
+  @override
+  String get message =>
+      'ContainerSpec.files lists "$path" more than once. Remove one of '
+      'them: which content would actually land is not something rig '
+      'decides silently.';
+}
+
 /// Another holder kept the lock for the whole timeout.
 final class LockTimeout extends RigException {
   const LockTimeout({required this.lockPath, required this.waited});

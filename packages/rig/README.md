@@ -89,6 +89,49 @@ ignoring an exit code is a mistake this library has already made once, in a
 cleanup path that reported work it had not done. Pass `expectSuccess: false`
 where a failure is a legitimate outcome.
 
+## Files needed before the container starts
+
+`ContainerLease.putFile` and a bind mount both write into the container, but
+neither works for a server that reads its configuration **at startup**:
+`putFile` runs after the container is already up, and a mount brings the
+*host's* ownership with it, which can leave a file unreadable to whatever
+non-root process was meant to read it. `ContainerSpec.files` places files
+before `start`, with the mode and ownership you ask for:
+
+```dart
+final spec = ContainerSpec(
+  image: 'my-app:test',
+  files: [
+    ContainerFile(
+      '/etc/my-app/config.yaml',
+      utf8.encode('log_level: debug'),
+      mode: '640',
+      uid: 1000,
+      gid: 1000,
+    ),
+  ],
+  waitFor: WaitFor.port(8080),
+);
+```
+
+`uid`/`gid` must be **numbers**, not names: Docker ignores a tar entry's
+user/group name and only ever applies the numeric id, so rig has no way to
+resolve `'app-user'` to whatever id it is inside your image — you have to
+know it.
+
+Only the file itself is written; rig never sends a directory entry for any
+of its parents. Doing so would overwrite an existing directory's own mode and
+owner with whatever this write happened to carry — a real, measured failure:
+a tar carrying `etc/` at mode 700 turned a container's `/etc` into
+`drwx------`, unreadable to anything not running as root. Docker creates
+missing parent directories itself, as `755` owned by root, so a deep path
+like the one above works without rig ever touching `/etc`.
+
+Because a shared container's identity already includes these files' content,
+mode, and ownership (the same way a mount's content does), a suite that finds
+an existing container reuses it as-is — rig does not rewrite its files on
+every acquire, which could stomp on a file another suite is using right now.
+
 ## Building an image
 
 ```dart

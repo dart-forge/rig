@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../engine/docker_engine.dart';
+import '../engine/tar.dart';
 import '../spec/container_spec.dart';
 import '../spec/labels.dart';
 import '../spec/spec_hash.dart';
@@ -174,6 +175,17 @@ Future<_Placed> _create(
   DockerEngine engine,
 ) async {
   final id = await engine.createContainer(spec, labels);
+  // Between create and start, so a server that reads its configuration at
+  // startup finds the file already there — see ContainerFile's doc comment.
+  // This only runs on the path that just created the container: a reused
+  // one (found running, or restarted from stopped) already holds identical
+  // content, because that content is folded into the hash that matched it
+  // in the first place. Writing here "just to be safe" on every acquire
+  // would not be safe at all — it would rewrite a file a running suite may
+  // currently be reading, for no reason, every time another suite joins.
+  if (spec.files.isNotEmpty) {
+    await engine.putArchive(id, '/', filesArchive(spec.files));
+  }
   await engine.startContainer(id);
   return (id: id, reused: false);
 }

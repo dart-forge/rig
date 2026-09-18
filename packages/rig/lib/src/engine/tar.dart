@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:path/path.dart' as p;
 
 import '../errors.dart';
+import '../spec/container_spec.dart';
 import 'dockerignore.dart';
 
 /// A validated entry of a Docker build context: a regular file or a
@@ -153,6 +154,10 @@ Uint8List buildContextTar(Directory contextDir, {String? dockerfile}) =>
 /// [uid]/[gid] are written into every entry's header, which is the whole
 /// point of `copyInto` taking them — see [ContainerLease.putFile]'s doc
 /// comment for why that matters.
+///
+/// Emits a directory entry for every directory it walks — on purpose, unlike
+/// [filesArchive]. See that function's doc comment for why the two writers
+/// disagree about this rather than sharing one rule.
 Uint8List directoryArchive(
   Directory hostDir, {
   required int uid,
@@ -220,6 +225,67 @@ Uint8List hostPathArchive(
     );
   }
   throw ArgumentError('hostPath is neither a file nor a directory: $hostPath');
+}
+
+/// Writes [files] as a ustar archive holding **only file entries**, for
+/// `ContainerSpec.files` — placed with `PUT /containers/{id}/archive` at the
+/// container's root, between create and start, before any of the image's
+/// own directories are trusted to still look the way the caller expects.
+///
+/// This is the same writer as [directoryArchive], used for a different
+/// purpose with the opposite rule about directories, and the two must stay
+/// opposite — do not "unify" them. [directoryArchive] copies a tree the
+/// *caller* owns, where a directory's own mode is part of what is being
+/// copied, so it emits a directory entry for every directory it sees, on
+/// purpose. [ContainerFile.path] instead names a leaf inside an *image*
+/// rig did not build and does not fully know the layout of: emitting a
+/// directory entry for one of its parents (say `etc`) would overwrite
+/// whatever mode and owner that directory already has in the image with
+/// whatever this archive happened to carry for it. Measured against a real
+/// daemon: a tar entry for `etc/` at mode 700, uid 12345 turned a
+/// container's `/etc` into `drwx------ 12345 12345`, and every non-root
+/// process trying to read anything under `/etc` failed in a way that never
+/// pointed back at the tar. A tar holding only the leaf file left `/etc`
+/// alone — Docker creates missing intermediate directories itself, as
+/// `755` owned by root, when nothing in the archive claims them. So writing
+/// only files here is not a simplification of [directoryArchive]'s job;
+/// it is the whole safety property this function exists for.
+///
+/// Each [ContainerFile] also carries its own `mode`/`uid`/`gid`, unlike
+/// [directoryArchive] and [buildContextTar] which take one `uid`/`gid` for
+/// the whole archive: rig cannot know the numeric id a given image's
+/// non-root process runs as, so the caller states it per file.
+Uint8List filesArchive(List<ContainerFile> files) {
+  final out = BytesBuilder(copy: false);
+
+  for (final file in files) {
+    // The archive is written for a PUT at the container's root ('/'), so
+    // entries are root-relative — a leading '/' would instead ask Docker to
+    // create a top-level directory literally named '', which does not exist.
+    final relative = file.path.startsWith('/')
+        ? file.path.substring(1)
+        : file.path;
+    _checkPathLength(relative);
+    final split = _splitUstarPath(relative);
+
+    out.add(
+      _header(
+        name: split.name,
+        prefix: split.prefix,
+        mode: parseFileMode(file.mode),
+        size: file.content.length,
+        typeflag: '0',
+        uid: file.uid,
+        gid: file.gid,
+      ),
+    );
+    out.add(Uint8List.fromList(file.content));
+    final padding = _paddingFor(file.content.length);
+    if (padding > 0) out.add(Uint8List(padding));
+  }
+
+  out.add(Uint8List(1024));
+  return out.toBytes();
 }
 
 Uint8List _archiveFromEntries(

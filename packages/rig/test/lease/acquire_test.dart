@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -257,6 +258,66 @@ void main() {
         isEmpty,
         reason: 'a failure must not wedge every later run',
       );
+    });
+  });
+
+  group('files', () {
+    ContainerSpec withFiles() => ContainerSpec(
+      image: 'postgres:16-alpine',
+      exposedPorts: const [5432],
+      waitFor: const WaitFor.healthy(),
+      healthcheck: const Healthcheck(test: ['CMD', 'true']),
+      files: [ContainerFile('/etc/app.conf', utf8.encode('configured'))],
+    );
+
+    test('writes the archive after create and before start — not just that '
+        'putArchive happened, but where', () async {
+      await acquire(withFiles());
+
+      expect(
+        engine.calls,
+        containsAllInOrder(['create', 'putArchive:fake1:/', 'start:fake1']),
+      );
+    });
+
+    test('does not write into a container that already exists', () async {
+      final spec = withFiles();
+      final existing = engine.addContainer(
+        labels: {
+          rigMarkerLabel: '1',
+          rigHashLabel: specHash(spec),
+          rigLifetimeLabel: 'shared',
+        },
+        hostPorts: {5432: 55004},
+        health: [HealthStatus.healthy],
+      );
+
+      final acquired = await acquireContainer(
+        spec: spec,
+        engine: engine,
+        stateDir: state,
+        project: 'aim_postgres',
+        sleep: (_) async {},
+      );
+
+      expect(acquired.containerId, existing);
+      expect(acquired.reused, isTrue);
+      expect(
+        engine.calls.any((c) => c.startsWith('putArchive')),
+        isFalse,
+        reason:
+            "a reused container's content already matched the hash that "
+            'found it, and rewriting it could clobber a file a running '
+            'suite is currently using',
+      );
+      expect(engine.calls.contains('create'), isFalse);
+    });
+
+    test('a container with no files declared gets no putArchive call at '
+        'all', () async {
+      await acquire();
+
+      expect(engine.calls.any((c) => c.startsWith('putArchive')), isFalse);
     });
   });
 
