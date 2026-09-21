@@ -1,7 +1,7 @@
 ## 0.4.0
 
-- No change. Released alongside the rest so one version of rig works with one
-  version of everything else.
+- No functional change in this package. It moves to `rig: ^0.4.0`, because
+  `^0.3.0` does not admit rig 0.4.0 and would otherwise hold you to rig 0.3.x.
 
 ## 0.3.0
 
