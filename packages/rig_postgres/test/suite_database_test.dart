@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:rig/fake_engine.dart';
+import 'package:rig/module.dart';
 import 'package:rig/rig.dart';
 import 'package:rig_postgres/src/suite_database.dart';
 import 'package:test/test.dart';
@@ -25,80 +26,6 @@ void main() {
   tearDown(() => tmp.deleteSync(recursive: true));
 
   String sqlOf(String call) => call.split(':').skip(2).join(':');
-
-  group('suiteDatabaseName', () {
-    test('carries the project so a stray database can be traced back', () {
-      final name = suiteDatabaseName(
-        project: 'aim_postgres',
-        now: now,
-        token: 'a1b2c3d4',
-      );
-
-      expect(name, startsWith('test_'));
-      expect(name, contains('aim_postgres'));
-      expect(name, endsWith('a1b2c3d4'));
-    });
-
-    test('carries the creation minute, which is how stale ones are found', () {
-      // Postgres does not record when a database was created, so the name has
-      // to. Without it, cleaning up after a crashed suite could not tell an
-      // abandoned database from one a suite created a moment ago.
-      final name = suiteDatabaseName(project: 'p', now: now, token: 't');
-
-      expect(name, contains(minuteStampOf(now)));
-    });
-
-    test('stays a legal identifier and within the 63 character limit', () {
-      final name = suiteDatabaseName(
-        project: 'Wildly-Long.Project Name/With Junk' * 4,
-        now: now,
-        token: 'a1b2c3d4',
-      );
-
-      expect(name.length, lessThanOrEqualTo(63));
-      expect(name, matches(RegExp(r'^[a-z][a-z0-9_]*$')));
-    });
-
-    test('every name it generates is one it can recognise', () {
-      // A generator that can emit a name its own parser rejects leaves
-      // databases nobody ever cleans up, in a container that is never
-      // removed. The empty and symbol-only cases are reachable:
-      // currentProjectName returns an empty string when it finds no pubspec.
-      const projects = [
-        'aim_postgres',
-        '',
-        '___',
-        '123',
-        'a',
-        'Wildly-Long.Project Name/With Junk Wildly-Long.Project Name/With Junk',
-      ];
-
-      for (final project in projects) {
-        final name = suiteDatabaseName(
-          project: project,
-          now: now,
-          token: 'a1b2c3d4',
-        );
-
-        expect(
-          createdAtOf(name),
-          isNotNull,
-          reason:
-              'generated "$name" from "$project" and could not parse '
-              'it back',
-        );
-        expect(name.length, lessThanOrEqualTo(63));
-        expect(name, matches(RegExp(r'^[a-z][a-z0-9_]*$')));
-      }
-    });
-
-    test('two calls a moment apart do not collide', () {
-      final a = suiteDatabaseName(project: 'p', now: now, token: 'aaaaaaaa');
-      final b = suiteDatabaseName(project: 'p', now: now, token: 'bbbbbbbb');
-
-      expect(a, isNot(b));
-    });
-  });
 
   group('createSuiteDatabase', () {
     test('clones template0, not template1', () async {
@@ -132,8 +59,9 @@ void main() {
       expect(
         suiteMarkerFile(
           stateDir: stateDir,
+          kind: 'postgres',
           containerId: containerId,
-          database: 'test_p_x',
+          resource: 'test_p_x',
         ).existsSync(),
         isTrue,
       );
@@ -213,8 +141,9 @@ void main() {
 
       final marker = suiteMarkerFile(
         stateDir: stateDir,
+        kind: 'postgres',
         containerId: containerId,
-        database: 'test_p_x',
+        resource: 'test_p_x',
       );
       expect(marker.existsSync(), isTrue);
 
@@ -266,8 +195,9 @@ void main() {
       );
       final marker = suiteMarkerFile(
         stateDir: stateDir,
+        kind: 'postgres',
         containerId: containerId,
-        database: 'test_p_x',
+        resource: 'test_p_x',
       );
       expect(marker.existsSync(), isTrue);
 
@@ -446,8 +376,9 @@ void main() {
       );
       final marker = suiteMarkerFile(
         stateDir: stateDir,
+        kind: 'postgres',
         containerId: containerId,
-        database: claimed,
+        resource: claimed,
       );
       marker.parent.createSync(recursive: true);
       marker.writeAsStringSync('');
@@ -493,8 +424,9 @@ void main() {
       );
       final marker = suiteMarkerFile(
         stateDir: stateDir,
+        kind: 'postgres',
         containerId: containerId,
-        database: abandoned,
+        resource: abandoned,
       );
       marker.parent.createSync(recursive: true);
       marker.writeAsStringSync('');
@@ -541,8 +473,9 @@ void main() {
       );
       final marker = suiteMarkerFile(
         stateDir: stateDir,
+        kind: 'postgres',
         containerId: containerId,
-        database: claimed,
+        resource: claimed,
       );
       marker.parent.createSync(recursive: true);
       marker.writeAsStringSync('');
@@ -581,8 +514,9 @@ void main() {
       );
       final marker = suiteMarkerFile(
         stateDir: stateDir,
+        kind: 'postgres',
         containerId: containerId,
-        database: claimed,
+        resource: claimed,
       );
       marker.parent.createSync(recursive: true);
       marker.writeAsStringSync('');

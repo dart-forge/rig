@@ -1,91 +1,7 @@
 import 'dart:io';
-import 'dart:math';
 
-import 'package:path/path.dart' as p;
 import 'package:rig/module.dart';
 import 'package:rig/rig.dart';
-
-/// How long a suite database has to sit unused before it is treated as
-/// abandoned.
-///
-/// Well above a minute on purpose: a name carries the minute it was created
-/// in, floored, so anything near that resolution cannot distinguish a
-/// database abandoned an hour ago from one created moments before a minute
-/// boundary.
-const Duration defaultStaleAfter = Duration(hours: 1);
-
-/// How long a suite's marker is trusted before the suite is presumed gone.
-///
-/// A day, against test runs measured in minutes. A marker younger than this
-/// protects its database unconditionally — no age or connection check can
-/// tell a suite sitting between two connections from an abandoned one, which
-/// is why the marker exists. Older than this and the suite is not coming
-/// back, and without that half the sweep would reclaim nothing at all: a
-/// database whose teardown ran was already dropped by that teardown, so every
-/// database the sweep meets still carries its marker.
-const Duration defaultMarkerStaleAfter = Duration(hours: 24);
-
-final Random _tokens = Random();
-
-/// The minute [at] falls in, as it appears inside a database name.
-String minuteStampOf(DateTime at) =>
-    '${at.toUtc().millisecondsSinceEpoch ~/ 60000}';
-
-/// A fresh token for a suite database name.
-String newSuiteToken() =>
-    _tokens.nextInt(1 << 32).toRadixString(16).padLeft(8, '0');
-
-/// A database name for one suite.
-///
-/// The project makes a stray database traceable to the package that left it,
-/// and the minute stamp is how an abandoned one is recognised later: Postgres
-/// does not record when a database was created, so the name has to. Without it
-/// there would be no way to tell a database a crashed suite left behind from
-/// one another suite created a moment ago.
-String suiteDatabaseName({
-  required String project,
-  required DateTime now,
-  required String token,
-}) {
-  final slug = _slugOf(project);
-  final stamp = minuteStampOf(now);
-  // Identifiers cap at 63 characters, and the stamp and token have to survive
-  // whatever the project is called.
-  final room = 63 - 'test__${stamp}_$token'.length;
-  final trimmed = slug.length > room ? slug.substring(0, room) : slug;
-  return 'test_${trimmed}_${stamp}_$token';
-}
-
-/// A project name reduced to something legal inside an identifier.
-///
-/// Never empty, and that is the point rather than tidiness. The name's shape —
-/// four underscore-separated parts — is how the sweep recognises a database it
-/// created. A project that slugged away to nothing would produce a three-part
-/// name that [createdAtOf] rejects, so the sweep would skip it forever, in a
-/// container that is deliberately never removed. `currentProjectName` returns
-/// an empty string when it finds no pubspec, so this is reachable rather than
-/// hypothetical.
-String _slugOf(String project) {
-  final slug = project
-      .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
-      .replaceAll(RegExp(r'^_+|_+$'), '');
-  return slug.isEmpty ? 'unnamed' : slug;
-}
-
-/// Where the marker recording that [database] inside [containerId] belongs to
-/// a suite that is still running is kept.
-///
-/// A file rather than an in-memory flag: `dart test` gives every suite file
-/// its own isolate, and isolates share no memory, so the filesystem is the
-/// one channel every isolate in a run can see. Written by
-/// [createSuiteDatabase] and removed by [dropSuiteDatabase]; not private so a
-/// test can plant or inspect one directly.
-File suiteMarkerFile({
-  required StateDir stateDir,
-  required String containerId,
-  required String database,
-}) => File(p.join(stateDir.markerDir('postgres').path, containerId, database));
 
 /// The suite's own database could not be created.
 final class SuiteDatabaseNotCreated extends RigException {
@@ -128,8 +44,9 @@ Future<void> createSuiteDatabase({
 
   final marker = suiteMarkerFile(
     stateDir: stateDir,
+    kind: 'postgres',
     containerId: containerId,
-    database: database,
+    resource: database,
   );
   marker.parent.createSync(recursive: true);
   marker.writeAsStringSync('');
@@ -181,8 +98,9 @@ Future<void> dropSuiteDatabase({
 
   final marker = suiteMarkerFile(
     stateDir: stateDir,
+    kind: 'postgres',
     containerId: containerId,
-    database: database,
+    resource: database,
   );
   try {
     if (marker.existsSync()) marker.deleteSync();
@@ -254,44 +172,24 @@ Future<List<String>> dropStaleSuiteDatabases({
     return dropped;
   }
 
-  final cutoff = now.toUtc().subtract(staleAfter);
-
   for (final name in listing.output.split('\n')) {
     final candidate = name.trim();
     if (candidate.isEmpty) continue;
 
-    final createdAt = createdAtOf(candidate);
-    if (createdAt == null) continue;
-
-    // The stamp is the minute the database was created in, floored, so the
-    // database can be up to a minute younger than it claims. Judge it by the
-    // latest moment it could have been created, never the earliest: being
-    // wrong in the other direction would drop a database whose own suite has
-    // not connected to it yet.
-    final createdNoLaterThan = createdAt.add(const Duration(minutes: 1));
-    if (!createdNoLaterThan.isBefore(cutoff)) continue;
-
-    // A fresh marker means some suite still claims this database, however
-    // long it has been since anyone connected to it — a suite between
-    // connections is exactly what the marker exists to protect. But a
-    // marker only survives as long as its suite does: teardown is what
-    // removes it, so a database whose teardown ran was already dropped by
-    // that same teardown. Every database that reaches this point either
-    // never had a marker, or still carries one from a suite that never got
-    // to teardown — and only the marker's own age, on a much longer
-    // threshold than staleAfter (a run lasts minutes, abandonment is a
-    // matter of days), can tell those two apart from a suite that is
-    // genuinely still running.
     final marker = suiteMarkerFile(
       stateDir: stateDir,
+      kind: 'postgres',
       containerId: containerId,
-      database: candidate,
+      resource: candidate,
     );
-    if (marker.existsSync()) {
-      final markerAge = now.toUtc().difference(
-        marker.lastModifiedSync().toUtc(),
-      );
-      if (markerAge <= markerStaleAfter) continue;
+    if (!isReclaimableSuiteDatabase(
+      database: candidate,
+      now: now,
+      marker: marker,
+      staleAfter: staleAfter,
+      markerStaleAfter: markerStaleAfter,
+    )) {
+      continue;
     }
 
     // force: false, same as dropSuiteDatabase's own sweep-driven call below
@@ -352,20 +250,6 @@ void _printCouldNotSweep(String containerId, EngineError e) {
     'rig_postgres: could not sweep stale suite databases in container '
     '$containerId because Docker could not run the command: $e',
   );
-}
-
-/// The minute stamp out of a name this module produced, or null when the name
-/// did not come from here.
-///
-/// Not private so a test can check the round trip. A generator that can emit a
-/// name its own parser rejects leaves databases nobody ever cleans up, and
-/// that pair is worth pinning directly rather than through the sweep.
-DateTime? createdAtOf(String database) {
-  final match = RegExp(r'^test_.*_(\d+)_[0-9a-f]{8}$').firstMatch(database);
-  if (match == null) return null;
-  final minutes = int.tryParse(match.group(1)!);
-  if (minutes == null) return null;
-  return DateTime.fromMillisecondsSinceEpoch(minutes * 60000, isUtc: true);
 }
 
 Future<ExecResult> _psql(
