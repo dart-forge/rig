@@ -65,9 +65,12 @@ void main() {
       expect(mysqlStringLiteral(r'ends\'), r"'ends\\'");
     });
 
-    test('escapes the backslash before the quote, not after', () {
-      // The other order turns one quote into a backslash followed by two,
-      // which is a different string.
+    test('doubles both when a value carries a quote and a backslash', () {
+      // Both are doubled, and the two doublings do not interfere: doubling a
+      // backslash introduces no quote and doubling a quote introduces no
+      // backslash. So this value comes out the same whichever runs first,
+      // which means the order is not what this test pins. What it pins is
+      // that neither doubling was dropped.
       expect(mysqlStringLiteral("a\\'b"), r"'a\\''b'");
     });
   });

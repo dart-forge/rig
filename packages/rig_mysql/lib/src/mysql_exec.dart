@@ -16,10 +16,11 @@ final class UnsafeMySqlIdentifier extends RigException {
 
 /// [identifier] wrapped in backticks, ready to appear in a statement.
 ///
-/// A backtick inside is doubled, which is how MySQL escapes one. A line break
-/// or a NUL byte is refused instead: nothing here needs either, and a name
-/// carrying one makes every error message that quotes the statement
-/// unreadable.
+/// A backtick inside is doubled, which is how MySQL escapes one. Three
+/// things are refused outright rather than escaped: an empty name, because
+/// nothing here ever legitimately wants one; and a line break or a NUL
+/// byte, because nothing here needs either and a name carrying one makes
+/// every error message that quotes the statement unreadable.
 String mysqlIdentifier(String identifier) {
   if (identifier.isEmpty) {
     throw const UnsafeMySqlIdentifier(identifier: '', reason: 'it is empty');
@@ -41,10 +42,17 @@ String mysqlIdentifier(String identifier) {
 
 /// [value] as a MySQL string literal.
 ///
-/// The backslash is doubled before the quote is: unlike the standard, MySQL
-/// reads a backslash inside a string literal as an escape character, so a
-/// value ending in one would otherwise swallow the closing quote. Doing it in
-/// the other order would turn one quote into a backslash followed by two.
+/// Both the quote and the backslash are doubled. The backslash needs it
+/// because MySQL reads one inside a string literal as an escape character,
+/// unlike the standard — a value ending in a backslash would otherwise
+/// swallow the closing quote.
+///
+/// The two doublings run in a fixed order but do not depend on it: doubling a
+/// backslash introduces no quote, and doubling a quote introduces no
+/// backslash, so neither feeds the other. That stops holding the moment a
+/// third character is added whose replacement contains a backslash or a
+/// quote — at which point the order becomes load-bearing and this paragraph
+/// is wrong.
 String mysqlStringLiteral(String value) =>
     "'${value.replaceAll(r'\', r'\\').replaceAll("'", "''")}'";
 
