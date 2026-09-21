@@ -91,19 +91,19 @@ void main() {
     );
   });
 
-  test('the two auth modes hash differently', () {
-    // Today they differ only because nativePassword happens to need a
-    // server flag that cachingSha2 does not — cachingSha2 contributes no
-    // flag of its own. That is accidental: a future mode needing no flag
-    // either would hash the same as cachingSha2, and two suites asking for
-    // different plugins would then be handed the same container. Each
-    // suite's setUpAll re-stores the password under its own plugin, so
-    // whichever ran last would silently decide what both suites actually
-    // authenticate with. This pins the two modes apart regardless of why.
-    expect(
-      specHashOf(mysqlSpec(auth: MySqlAuth.cachingSha2)),
-      isNot(specHashOf(mysqlSpec(auth: MySqlAuth.nativePassword))),
-    );
+  test('every auth mode gets its own container', () {
+    // Not a comparison of today's two values: this walks the enum, so a
+    // third mode added without a server flag of its own would hash the same
+    // as caching_sha2 and fail here immediately. That collision is the one
+    // failure this package exists to prevent — two suites asking for
+    // different plugins would share a container, and each one's setUpAll
+    // would re-store the password under its own plugin, last writer winning,
+    // leaving the loser testing a plugin it never asked for.
+    final hashes = {
+      for (final auth in MySqlAuth.values) specHashOf(mysqlSpec(auth: auth)),
+    };
+
+    expect(hashes, hasLength(MySqlAuth.values.length));
   });
 
   test('stops the server generating a certificate when TLS is off', () {
