@@ -8,7 +8,21 @@ import 'package:rig_mysql/src/suite_database.dart';
 import 'package:test/test.dart';
 
 void main() {
-  final my = useMySql(isolation: MySqlIsolation.none);
+  // Dedicated, not shared: this suite drives the sweep by calling
+  // createSuiteDatabase / dropStaleSuiteDatabases / dropSuiteDatabase
+  // directly, without the per-container lock useMySql() takes internally
+  // around its own use of them. On a shared container, another suite's own
+  // sweep (anything using the default MySqlIsolation.database) races this
+  // one for the same rows and markers — confirmed by running into it: once
+  // as a crash when a marker this test still believed in was deleted out
+  // from under a concurrent sweep, and once as this test's own database,
+  // still marked as claimed by this test's own accounting, getting reclaimed
+  // anyway. A dedicated container removes the other sweeper rather than
+  // trying to lock against it.
+  final my = useMySql(
+    isolation: MySqlIsolation.none,
+    lifetime: Lifetime.dedicated,
+  );
 
   test('reclaims an abandoned database and leaves a claimed one', () async {
     final engine = await currentEngine();

@@ -3,6 +3,8 @@ library;
 
 import 'package:rig/module.dart';
 import 'package:rig_mysql/rig_mysql.dart';
+import 'package:rig_mysql/src/mysql_exec.dart'
+    show mysqlCommand, mysqlIdentifier;
 import 'package:test/test.dart';
 
 void main() {
@@ -19,16 +21,20 @@ void main() {
     // test user rather than root is the whole point of this check.
     final engine = await currentEngine();
 
-    final result = await engine.exec(first.container.containerId, [
-      'mysql',
-      '-u${first.user}',
-      '-p${first.password}',
-      first.database,
-      '-N',
-      '-B',
-      '-e',
-      'CREATE TABLE t (id INT); INSERT INTO t VALUES (1); SELECT id FROM t',
-    ]);
+    final result = await engine.exec(
+      first.container.containerId,
+      mysqlCommand(
+        user: first.user,
+        password: first.password,
+        // USE, rather than a database positional argument, because
+        // mysqlCommand has no argv slot for one — the statement is the only
+        // thing that travels positionally.
+        sql:
+            'USE ${mysqlIdentifier(first.database)}; '
+            'CREATE TABLE t (id INT); INSERT INTO t VALUES (1); '
+            'SELECT id FROM t',
+      ),
+    );
 
     expect(result.exitCode, 0, reason: result.output);
     expect(result.output.trim(), '1');
@@ -41,16 +47,14 @@ void main() {
     // that `second` cannot see it.
     final engine = await currentEngine();
 
-    final result = await engine.exec(second.container.containerId, [
-      'mysql',
-      '-u${second.user}',
-      '-p${second.password}',
-      second.database,
-      '-N',
-      '-B',
-      '-e',
-      'SHOW TABLES',
-    ]);
+    final result = await engine.exec(
+      second.container.containerId,
+      mysqlCommand(
+        user: second.user,
+        password: second.password,
+        sql: 'USE ${mysqlIdentifier(second.database)}; SHOW TABLES',
+      ),
+    );
 
     expect(result.exitCode, 0, reason: result.output);
     expect(result.output.trim(), isEmpty);

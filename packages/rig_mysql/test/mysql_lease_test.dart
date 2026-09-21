@@ -95,7 +95,10 @@ void main() {
 
       await leaseWith(rootPassword: 'admin').flushAuthCache();
 
-      expect(captured, contains('-padmin'));
+      // The password travels through MYSQL_PWD, as its own positional
+      // argument, not as a -p flag — see mysqlCommand.
+      expect(captured, contains('admin'));
+      expect(captured, isNot(contains('-padmin')));
       expect(captured, contains('FLUSH PRIVILEGES'));
     });
 

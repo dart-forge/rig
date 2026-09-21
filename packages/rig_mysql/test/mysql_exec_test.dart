@@ -75,6 +75,111 @@ void main() {
     });
   });
 
+  group('mysqlCommand', () {
+    // user and password are deliberately different strings throughout this
+    // group, so an assertion checking one cannot pass by coincidentally
+    // matching the other.
+    const user = 'alice';
+    const password = 'hunter2';
+
+    test(
+      'argv is sh, its script, then \$0 and the three positional values',
+      () {
+        final command = mysqlCommand(
+          user: user,
+          password: password,
+          sql: 'SELECT 1',
+        );
+
+        expect(command, [
+          'sh',
+          '-c',
+          r'MYSQL_PWD="$1" exec mysql -u"$2" -N -B -e "$3"',
+          'sh',
+          password,
+          user,
+          'SELECT 1',
+        ]);
+      },
+    );
+
+    test('the statement reaches the argv exactly once, as its own entry — '
+        'pasting it into the script instead would make it disappear from '
+        'here', () {
+      const sql = "SELECT 'it''s' FROM `t`";
+      final command = mysqlCommand(user: user, password: password, sql: sql);
+
+      expect(command.where((arg) => arg == sql), hasLength(1));
+      expect(command.last, sql);
+    });
+
+    test('the script does not contain the statement — a future edit that '
+        'pasted it in would corrupt the script the moment the statement '
+        'carried a quote or a backtick, which is exactly what it is not '
+        'allowed to do', () {
+      const sql = "SELECT 'it''s' FROM `t`";
+      final command = mysqlCommand(user: user, password: password, sql: sql);
+
+      expect(command[2], isNot(contains(sql)));
+      expect(command[2], isNot(contains("'")));
+      expect(command[2], isNot(contains('`')));
+    });
+
+    test('the script references the statement positionally, as \$3 — this '
+        'is what the previous test alone could not tell apart from a '
+        'script that dropped the statement entirely rather than expanding '
+        'it', () {
+      final command = mysqlCommand(
+        user: user,
+        password: password,
+        sql: 'SELECT 1',
+      );
+
+      expect(command[2], contains(r'"$3"'));
+    });
+
+    test(
+      'the password travels through MYSQL_PWD, never as a -p flag — a -p '
+      'flag is what makes the client write the warning to stderr that '
+      'Docker\'s exec API merges into the same output every caller reads',
+      () {
+        final command = mysqlCommand(
+          user: user,
+          password: password,
+          sql: 'SELECT 1',
+        );
+
+        expect(command[2], contains('MYSQL_PWD='));
+        expect(command[2], isNot(contains('-p')));
+      },
+    );
+
+    test('the user reaches the client as -u"\$2", positionally rather than '
+        'pasted into the script', () {
+      final command = mysqlCommand(
+        user: user,
+        password: password,
+        sql: 'SELECT 1',
+      );
+
+      expect(command[2], contains(r'-u"$2"'));
+      expect(command[2], isNot(contains(user)));
+    });
+
+    test('still asks for rows without column names, one per line', () {
+      // The counterpart of psql's -tAc: callers split the output on
+      // newlines and expect nothing but values.
+      final command = mysqlCommand(
+        user: user,
+        password: password,
+        sql: 'SELECT 1',
+      );
+
+      expect(command[2], contains('-N'));
+      expect(command[2], contains('-B'));
+    });
+  });
+
   group('runMysql', () {
     late FakeDockerEngine engine;
     late String containerId;
@@ -90,61 +195,24 @@ void main() {
       };
     });
 
-    test('hands the statement over as one argument', () async {
-      await runMysql(
-        engine,
-        containerId,
-        rootPassword: 'root',
-        sql: 'SELECT 1',
-      );
+    test(
+      'delegates to mysqlCommand as root, with the given password',
+      () async {
+        await runMysql(
+          engine,
+          containerId,
+          rootPassword: 'hunter2',
+          sql: 'SELECT 1',
+        );
 
-      expect(captured, contains('SELECT 1'));
-    });
+        expect(
+          captured,
+          mysqlCommand(user: 'root', password: 'hunter2', sql: 'SELECT 1'),
+        );
+      },
+    );
 
-    test('does not go through a shell', () async {
-      // A shell would reinterpret the statement: the backticks around an
-      // identifier become command substitution inside double quotes, and
-      // switching to single quotes collides with the quotes around a string
-      // literal. No quoting survives both, so the shell has to be absent
-      // rather than worked around.
-      const grant = "GRANT ALL ON `db`.* TO 'test'@'%'";
-
-      await runMysql(engine, containerId, rootPassword: 'root', sql: grant);
-
-      expect(captured.first, 'mysql');
-      expect(captured, isNot(contains('sh')));
-      expect(captured, isNot(contains('-c')));
-      expect(captured, contains(grant));
-    });
-
-    test('runs as root with the password attached to the flag', () async {
-      // mysql takes the password joined to -p; a space would make it read
-      // the next argument as a database name and prompt for a password.
-      await runMysql(
-        engine,
-        containerId,
-        rootPassword: 'hunter2',
-        sql: 'SELECT 1',
-      );
-
-      expect(captured, contains('-uroot'));
-      expect(captured, contains('-phunter2'));
-    });
-
-    test('asks for rows without column names, one per line', () async {
-      // The counterpart of psql's -tAc: callers split the output on
-      // newlines and expect nothing but values.
-      await runMysql(
-        engine,
-        containerId,
-        rootPassword: 'root',
-        sql: 'SELECT 1',
-      );
-
-      expect(captured, containsAll(['-N', '-B']));
-    });
-
-    test('hands back what mysql said', () async {
+    test('hands back the ExecResult unchanged', () async {
       engine.onExec = (_) =>
           const ExecResult(exitCode: 1, output: 'ERROR 1044 (42000)');
 
@@ -156,7 +224,7 @@ void main() {
       );
 
       expect(result.exitCode, 1);
-      expect(result.output, contains('1044'));
+      expect(result.output, 'ERROR 1044 (42000)');
     });
   });
 }

@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:rig/fake_engine.dart';
 import 'package:rig/module.dart';
 import 'package:rig/rig.dart';
+import 'package:rig_mysql/src/mysql_exec.dart' show mysqlCommand;
 import 'package:rig_mysql/src/suite_database.dart';
 import 'package:test/test.dart';
 
@@ -28,10 +29,40 @@ void main() {
     if (tmp.existsSync()) tmp.deleteSync(recursive: true);
   });
 
-  List<String> statements() => [
-    for (final call in engine.calls)
-      if (call.startsWith('exec:')) call.split('-e ').last,
-  ];
+  // Every call here runs as root via runMysql, so the argv up to the
+  // statement itself is always the same shape: sh, its fixed script, then
+  // sh again, the root password, and the user, all before the statement.
+  // Splitting on a literal "-e " (as this used to) broke the moment
+  // runMysql started going through a shell, because the script text itself
+  // now contains "-e " ahead of its own placeholder — that split would land
+  // there and hand back the statement with a meaningless prefix still
+  // attached. Deriving the prefix from mysqlCommand itself, instead of
+  // hand-copying its shape, means this cannot drift out of sync with it
+  // again.
+  String callPrefix() =>
+      'exec:$containerId:'
+      '${mysqlCommand(user: 'root', password: 'root', sql: '').sublist(0, 6).join(' ')} ';
+
+  List<String> statements() {
+    final prefix = callPrefix();
+    return [
+      for (final call in engine.calls)
+        if (call.startsWith('exec:'))
+          (() {
+            if (!call.startsWith(prefix)) {
+              // Every helper above passes rootPassword: 'root' to a
+              // function that always runs as root, so this should be
+              // unreachable — failing loudly here is better than silently
+              // handing back a wrong slice of the call.
+              throw StateError(
+                'expected "$call" to start with "$prefix" — a call in this '
+                'test did not run as root with rootPassword "root"',
+              );
+            }
+            return call.substring(prefix.length);
+          })(),
+    ];
+  }
 
   File markerFor(String database) => suiteMarkerFile(
     stateDir: stateDir,

@@ -2,13 +2,24 @@
 library;
 
 import 'package:rig/module.dart';
+import 'package:rig/rig.dart';
 import 'package:rig_mysql/rig_mysql.dart';
 import 'package:test/test.dart';
 
 void main() {
+  // Dedicated, not shared: this test's whole point is the server's auth
+  // cache state, and useMySql() re-runs confirmAuthMode's ALTER USER — which
+  // re-hashes the password and so invalidates whatever caching_sha2_password
+  // had cached for this user — in the setUpAll of every suite that shares a
+  // container. mysql_tls_test.dart's "TLS off" group asks for this exact
+  // same configuration, and running both concurrently reproduced the
+  // interference every time: this test's own "warm the cache" step lost the
+  // race against the other suite's confirmAuthMode landing in between it and
+  // the final check. A dedicated container removes the other tenant.
   final my = useMySql(
     tls: const MySqlTls.off(),
     isolation: MySqlIsolation.none,
+    lifetime: Lifetime.dedicated,
   );
 
   test('a cold cache forces the full authentication path', () async {

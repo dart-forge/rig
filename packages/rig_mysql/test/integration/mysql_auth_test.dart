@@ -3,19 +3,19 @@ library;
 
 import 'package:rig/module.dart';
 import 'package:rig_mysql/rig_mysql.dart';
+import 'package:rig_mysql/src/mysql_exec.dart' show mysqlCommand;
 import 'package:test/test.dart';
 
 Future<String> storedPluginOf(MySqlLease my) async {
   final engine = await currentEngine();
-  final result = await engine.exec(my.container.containerId, [
-    'mysql',
-    '-uroot',
-    '-p${my.rootPassword}',
-    '-N',
-    '-B',
-    '-e',
-    "SELECT plugin FROM mysql.user WHERE user = '${my.user}'",
-  ]);
+  final result = await engine.exec(
+    my.container.containerId,
+    mysqlCommand(
+      user: 'root',
+      password: my.rootPassword,
+      sql: "SELECT plugin FROM mysql.user WHERE user = '${my.user}'",
+    ),
+  );
   expect(result.exitCode, 0, reason: result.output);
   return result.output.trim();
 }
