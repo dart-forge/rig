@@ -118,5 +118,22 @@ void main() {
         isFalse,
       );
     });
+
+    test('a marker that existed but is gone by the time its timestamp is '
+        'read does not claim it, and does not throw', () {
+      // The regression this pins: markerStillClaims used to call
+      // existsSync() and then lastModifiedSync() as two separate
+      // filesystem operations. Another suite's teardown deleting the
+      // marker in the gap between them threw a FileSystemException that
+      // nothing here caught. A single isolate cannot force that exact
+      // gap, so this tests the equivalent observable instead — a marker
+      // that is simply gone by the time this function looks at it, which
+      // is what that gap leaves behind either way.
+      final marker = plant(age: const Duration(minutes: 5));
+      marker.deleteSync();
+
+      expect(() => markerStillClaims(marker, now: now), returnsNormally);
+      expect(markerStillClaims(marker, now: now), isFalse);
+    });
   });
 }

@@ -44,7 +44,16 @@ bool markerStillClaims(
   required DateTime now,
   Duration markerStaleAfter = defaultMarkerStaleAfter,
 }) {
-  if (!marker.existsSync()) return false;
-  final age = now.toUtc().difference(marker.lastModifiedSync().toUtc());
-  return age <= markerStaleAfter;
+  // Read the timestamp rather than checking existence first: another suite's
+  // teardown can delete the marker between the two calls, and a vanished
+  // marker means the same thing as an absent one — the suite that owned it
+  // has finished.
+  final DateTime modified;
+  try {
+    modified = marker.lastModifiedSync();
+  } on FileSystemException {
+    return false;
+  }
+
+  return now.toUtc().difference(modified.toUtc()) <= markerStaleAfter;
 }
