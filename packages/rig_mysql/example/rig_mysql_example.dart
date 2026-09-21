@@ -14,15 +14,22 @@ void main() {
   test('there is a MySQL, and it is mine', () async {
     final engine = await currentEngine();
 
+    // Two details, both of which bite if you skip them. The password goes
+    // through the environment: with `-p` on the command line the client
+    // writes a warning to stderr, and Docker merges stderr into stdout, so
+    // the warning would land in the output next to the value. And the
+    // statement travels as a positional parameter, which the shell does not
+    // re-scan — pasting it into the script would turn a backtick-quoted
+    // identifier into command substitution.
     final result = await engine.exec(my.container.containerId, [
-      'mysql',
-      '-u${my.user}',
-      '-p${my.password}',
-      my.database,
-      '-N',
-      '-B',
-      '-e',
+      'sh',
+      '-c',
+      r'MYSQL_PWD="$1" exec mysql -u"$2" -N -B "$4" -e "$3"',
+      'sh',
+      my.password,
+      my.user,
       'SELECT DATABASE()',
+      my.database,
     ]);
 
     expect(result.output.trim(), my.database);
