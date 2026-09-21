@@ -1,6 +1,5 @@
 import 'package:rig/rig.dart';
 import 'package:rig_mysql/rig_mysql.dart';
-import 'package:rig_mysql/src/mysql_spec.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -43,11 +42,22 @@ void main() {
   test('probes without credentials', () {
     // mysqladmin ping exits 0 even when the login is refused, because the
     // server answered — which is all this needs to know. Passing the
-    // password would put it in the container's process list for nothing.
-    final probe = mysqlSpec(rootPassword: 'admin').healthcheck!.test.last;
+    // password would put it in the container's own process list for
+    // nothing.
+    final probe = mysqlSpec(
+      user: 'zaphod',
+      password: 'betelgeuse',
+      rootPassword: 'hunter2',
+    ).healthcheck!.test.last;
 
-    expect(probe, isNot(contains('admin')));
-    expect(probe, isNot(contains('-p')));
+    expect(probe, isNot(contains('zaphod')));
+    expect(probe, isNot(contains('betelgeuse')));
+    expect(probe, isNot(contains('hunter2')));
+    // And no credential flag at all, whatever it might carry. Anchored on a
+    // word boundary because the tool is called mysqladmin — a bare search
+    // for the letters would match its own name, which is the mistake this
+    // test had in its first version.
+    expect(probe, isNot(matches(RegExp(r'(^|\s)-[up]'))));
   });
 
   test('waits for the healthcheck rather than the port', () {
