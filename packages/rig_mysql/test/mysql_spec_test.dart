@@ -1,6 +1,9 @@
+import 'package:rig/module.dart';
 import 'package:rig/rig.dart';
 import 'package:rig_mysql/rig_mysql.dart';
 import 'package:test/test.dart';
+
+String specHashOf(ContainerSpec s) => specHash(s);
 
 void main() {
   test('runs the version asked for', () {
@@ -88,6 +91,21 @@ void main() {
     );
   });
 
+  test('the two auth modes hash differently', () {
+    // Today they differ only because nativePassword happens to need a
+    // server flag that cachingSha2 does not — cachingSha2 contributes no
+    // flag of its own. That is accidental: a future mode needing no flag
+    // either would hash the same as cachingSha2, and two suites asking for
+    // different plugins would then be handed the same container. Each
+    // suite's setUpAll re-stores the password under its own plugin, so
+    // whichever ran last would silently decide what both suites actually
+    // authenticate with. This pins the two modes apart regardless of why.
+    expect(
+      specHashOf(mysqlSpec(auth: MySqlAuth.cachingSha2)),
+      isNot(specHashOf(mysqlSpec(auth: MySqlAuth.nativePassword))),
+    );
+  });
+
   test('stops the server generating a certificate when TLS is off', () {
     expect(
       mysqlSpec(tls: const MySqlTls.off()).command,
@@ -96,7 +114,13 @@ void main() {
   });
 
   test('leaves TLS alone by default', () {
-    expect(mysqlSpec().command.where((a) => a.contains('certs')), isEmpty);
+    // Paired with a flag source that is not empty, so the filter has
+    // something to filter — otherwise an empty command list satisfies this
+    // whatever the TLS default emits.
+    expect(
+      mysqlSpec(verboseLogs: true).command.where((a) => a.contains('certs')),
+      isEmpty,
+    );
   });
 
   test('turns on the general log only when asked', () {

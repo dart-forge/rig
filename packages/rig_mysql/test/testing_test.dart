@@ -171,7 +171,9 @@ void main() {
       // The failure a reader needs to understand is not "a statement
       // failed": it is that the container would authenticate with whatever
       // the image happened to store, and every assertion about the auth mode
-      // would be meaningless.
+      // would be meaningless. Other tests in this group already pin that the
+      // plugin is named in the statement; this one pins the reason it might
+      // not be loaded at all.
       fake.onExec = (_) =>
           const ExecResult(exitCode: 1, output: 'ERROR 1524 (HY000)');
 
@@ -181,7 +183,7 @@ void main() {
           isA<AuthConfirmationFailed>().having(
             (e) => e.message,
             'message',
-            contains('mysql_native_password'),
+            contains('8.4'),
           ),
         ),
       );
