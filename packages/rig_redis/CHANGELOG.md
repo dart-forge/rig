@@ -1,7 +1,9 @@
 ## 0.4.0
 
-- No change in behaviour. The suite marker rule moved into `rig`; this package
-  now uses it.
+- The suite marker rule moved into `rig`; this package now uses it. No API
+  change.
+- Fixed along the way: reading an index marker no longer throws when another
+  suite's teardown removes it at the same moment.
 
 ## 0.3.0
 
