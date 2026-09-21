@@ -1,3 +1,8 @@
+## 0.4.0
+
+- No change in behaviour. The suite marker rule and the database naming moved
+  into `rig`; this package now uses them.
+
 ## 0.3.0
 
 No functional change in this package. It moves to `rig: ^0.3.0`, because

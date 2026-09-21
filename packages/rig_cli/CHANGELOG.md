@@ -1,3 +1,8 @@
+## 0.4.0
+
+- No change. Released alongside the rest so one version of rig works with one
+  version of everything else.
+
 ## 0.3.0
 
 - No behavior change. `rig prune`'s decision logic moved into `rig` as

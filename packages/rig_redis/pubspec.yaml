@@ -1,6 +1,6 @@
 name: rig_redis
 description: Redis containers for Dart tests — a password that is genuinely enforced, and no client dependency.
-version: 0.3.0
+version: 0.4.0
 repository: https://github.com/dart-forge/rig
 topics:
   - testing
