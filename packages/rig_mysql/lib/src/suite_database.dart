@@ -23,17 +23,25 @@ final class SuiteDatabaseNotCreated extends RigException {
 
 /// The database was created but could not be marked as in use.
 final class SuiteMarkerNotWritten extends RigException {
-  const SuiteMarkerNotWritten({required this.database, required this.detail});
+  const SuiteMarkerNotWritten({
+    required this.database,
+    required this.detail,
+    required this.droppedAgain,
+  });
 
   final String database;
   final String detail;
 
+  /// Whether the cleanup drop succeeded. When false, [database] is still on
+  /// the server, and the sweep will reclaim it once it is stale.
+  final bool droppedAgain;
+
   @override
   String get message =>
       'Created $database but could not record that this suite is using it, '
-      'so the sweep would have reclaimed it from underneath this run. The '
-      'database has been dropped again rather than left unprotected.\n'
-      '$detail';
+      'so the sweep would have reclaimed it from underneath this run.\n'
+      '$detail\n\n'
+      '${droppedAgain ? 'The database has been dropped again rather than left unprotected.' : 'Dropping it again did not succeed either, so it is still on the server; the sweep will reclaim it once it is stale.'}';
 }
 
 /// Creates [database] for one suite inside a container others are sharing,
@@ -85,8 +93,17 @@ Future<void> createSuiteDatabase({
     marker.parent.createSync(recursive: true);
     marker.writeAsStringSync('');
   } on FileSystemException catch (e) {
-    await _dropDatabase(engine, containerId, rootPassword, database);
-    throw SuiteMarkerNotWritten(database: database, detail: '$e');
+    final cleanup = await _dropDatabase(
+      engine,
+      containerId,
+      rootPassword,
+      database,
+    );
+    throw SuiteMarkerNotWritten(
+      database: database,
+      detail: '$e',
+      droppedAgain: cleanup.exitCode == 0,
+    );
   }
 }
 

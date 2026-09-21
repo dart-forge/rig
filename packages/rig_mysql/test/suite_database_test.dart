@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -261,22 +262,53 @@ void main() {
           body: 'no such container',
         );
 
-        expect(await sweep(), isEmpty);
+        final lines = <String>[];
+        final dropped = await runZoned(
+          sweep,
+          zoneSpecification: ZoneSpecification(
+            print: (self, parent, zone, line) => lines.add(line),
+          ),
+        );
+
+        expect(dropped, isEmpty);
+        expect(lines, hasLength(1));
+        expect(
+          lines.single,
+          allOf(
+            contains(containerId),
+            contains('Docker could not run the command'),
+          ),
+        );
       },
     );
 
-    test('does not report a drop that did not happen', () async {
-      final old = named(ago: const Duration(hours: 3));
-      engine.onExec = (command) {
-        final sql = command.last;
-        if (sql.contains('information_schema')) {
-          return ExecResult(exitCode: 0, output: old);
-        }
-        return const ExecResult(exitCode: 1, output: 'ERROR 1010 (HY000)');
-      };
+    test(
+      'does not report a drop that did not happen, and leaves the marker',
+      () async {
+        final old = named(ago: const Duration(hours: 3));
+        // The marker is aged past markerStaleAfter on purpose, so the database
+        // is still reclaimable and the sweep actually reaches the drop. A
+        // fresh marker would make it skip the candidate entirely, and this
+        // test would pass while exercising nothing.
+        final marker = markerFor(old);
+        marker.parent.createSync(recursive: true);
+        marker.writeAsStringSync('');
+        marker.setLastModifiedSync(now.subtract(const Duration(days: 2)));
 
-      expect(await sweep(), isEmpty);
-      expect(markerFor(old).existsSync(), isFalse);
-    });
+        engine.onExec = (command) {
+          final sql = command.last;
+          if (sql.contains('information_schema')) {
+            return ExecResult(exitCode: 0, output: old);
+          }
+          return const ExecResult(exitCode: 1, output: 'ERROR 1010 (HY000)');
+        };
+
+        expect(await sweep(), isEmpty);
+        // Nothing was dropped, so the marker has to still be there. Clearing
+        // it would leave the database unprotected against the next sweep,
+        // while the run that owns it is still going.
+        expect(marker.existsSync(), isTrue);
+      },
+    );
   });
 }
