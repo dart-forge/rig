@@ -1,6 +1,6 @@
 name: rig
 description: Your tests start the containers they need. Declare a container, get a ready port.
-version: 0.3.0
+version: 0.4.0
 repository: https://github.com/dart-forge/rig
 topics:
   - testing
