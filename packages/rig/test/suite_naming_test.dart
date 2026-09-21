@@ -51,6 +51,40 @@ void main() {
       expect(createdAtOf(name), now, reason: 'a trimmed name must still parse');
     });
 
+    test(
+      'is always a legal SQL identifier, whatever the project is called',
+      () {
+        // The name is interpolated into CREATE DATABASE and DROP DATABASE
+        // unescaped, so a character _slugOf let through would be a syntax
+        // error at best. And the sweep recognises its own databases by
+        // parsing the name, so a name that came out malformed would be
+        // skipped forever, in a container that is deliberately never removed.
+        const projects = [
+          'aim_mysql',
+          '',
+          '___',
+          '123',
+          'a',
+          'Weird Name!! (v2) / mixed 漢字',
+        ];
+
+        for (final project in projects) {
+          final name = suiteDatabaseName(
+            project: project,
+            now: now,
+            token: 'deadbeef',
+          );
+
+          expect(
+            name,
+            matches(RegExp(r'^[a-z][a-z0-9_]*$')),
+            reason: 'project: "$project"',
+          );
+          expect(createdAtOf(name), now, reason: 'project: "$project"');
+        }
+      },
+    );
+
     test('a project that slugs away to nothing still produces a name the '
         'sweep can parse', () {
       // currentProjectName returns an empty string when it finds no pubspec,
