@@ -104,9 +104,11 @@ Inside a shared container, each suite gets a database of its own named
 database and drops other suites' `test_*` databases that are old enough (an
 hour, by default) and that no marker still claims — this is what keeps a
 long-lived shared container from accumulating databases from crashed runs
-forever. Unlike the Postgres sibling, MySQL's `DROP DATABASE` succeeds even
-while something is still connected, so the marker is the only thing
-standing between a live suite and the sweep, not a second line of defence.
+forever. The container's own database is never one of them, since its name
+never has the shape a suite's own database is given. Unlike the Postgres
+sibling, MySQL's `DROP DATABASE` succeeds even while something is still
+connected, so the marker is the only thing standing between a live suite and
+the sweep, not a second line of defence.
 
 Ask for `lifetime: Lifetime.dedicated` when a suite would disturb others
 sharing the container — connection limits, restarts, or assertions that
