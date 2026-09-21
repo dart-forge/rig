@@ -51,6 +51,10 @@ jobs:
         working-directory: packages/rig_cli
         run: dart test
 
+      - name: Test rig_mysql
+        working-directory: packages/rig_mysql
+        run: dart test
+
       - name: Test rig_postgres
         working-directory: packages/rig_postgres
         run: dart test
