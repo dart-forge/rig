@@ -173,8 +173,8 @@ Future<PruneResult> pruneContainers({
   );
 
   // Every container this run knows the daemon still has, minus whatever it
-  // just removed above — a container's tmpfs PGDATA goes with it, so a
-  // suite marker for anything else has nothing left to protect. This runs
+  // just removed above — a container's tmpfs data directory goes with it, so
+  // a suite marker for anything else has nothing left to protect. This runs
   // unconditionally, the same way clearing a vanished container's failure
   // marker does: gating it behind a flag would let orphaned directories pile
   // up through ordinary use.
