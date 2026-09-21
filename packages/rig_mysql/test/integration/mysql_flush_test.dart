@@ -31,7 +31,7 @@ void main() {
     // only observable proof that the cache was emptied.
     final engine = await currentEngine();
 
-    Future<int> connectWithoutTheKey() async {
+    Future<int> connect({required bool withTheKey}) async {
       final result = await engine.exec(my.container.containerId, [
         'mysql',
         '-h',
@@ -39,6 +39,7 @@ void main() {
         '-u${my.user}',
         '-p${my.password}',
         '--ssl-mode=DISABLED',
+        if (withTheKey) '--get-server-public-key',
         '-N',
         '-B',
         '-e',
@@ -47,33 +48,29 @@ void main() {
       return result.exitCode;
     }
 
-    await my.flushAuthCache();
-    expect(
-      await connectWithoutTheKey(),
-      isNot(0),
-      reason: 'a cold cache should have demanded the public key',
-    );
+    // Warm the cache the way a client that has the key would. Until this
+    // succeeds there is nothing for a flush to empty: the server populates
+    // the cache only on a successful full authentication, and useMySql's own
+    // setUpAll has already invalidated it by re-storing the password.
+    expect(await connect(withTheKey: true), 0);
 
-    // Warm the cache the way a client that has the key would.
-    final warmed = await engine.exec(my.container.containerId, [
-      'mysql',
-      '-h',
-      '127.0.0.1',
-      '-u${my.user}',
-      '-p${my.password}',
-      '--ssl-mode=DISABLED',
-      '--get-server-public-key',
-      '-N',
-      '-B',
-      '-e',
-      'SELECT 1',
-    ]);
-    expect(warmed.exitCode, 0, reason: warmed.output);
-
+    // With the cache warm the fast path works without the key. This is the
+    // assertion that makes the one after the flush mean anything — the only
+    // difference between the two is the flush itself.
     expect(
-      await connectWithoutTheKey(),
+      await connect(withTheKey: false),
       0,
       reason: 'a warm cache should take the fast path',
+    );
+
+    await my.flushAuthCache();
+
+    expect(
+      await connect(withTheKey: false),
+      isNot(0),
+      reason:
+          'the flush should have emptied the cache, so a client without '
+          'the public key has no way to authenticate',
     );
   });
 }
