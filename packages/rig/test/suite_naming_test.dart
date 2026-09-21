@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:rig/module.dart';
 import 'package:rig/rig.dart';
+import 'package:rig/src/suite/suite_naming.dart'
+    show createdAtOf, minuteStampOf;
 import 'package:test/test.dart';
 
 void main() {

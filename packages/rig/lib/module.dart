@@ -24,9 +24,7 @@ export 'src/suite/suite_markers.dart'
     show defaultMarkerStaleAfter, markerStillClaims, suiteMarkerFile;
 export 'src/suite/suite_naming.dart'
     show
-        createdAtOf,
         defaultStaleAfter,
         isReclaimableSuiteDatabase,
-        minuteStampOf,
         newSuiteToken,
         suiteDatabaseName;
