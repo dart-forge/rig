@@ -137,3 +137,8 @@ running Docker daemon.
 dart test                  # everything — needs Docker
 dart test -t integration   # only the integration suites
 ```
+
+A full run exercises two versions and two auth modes, plus a TLS-off
+container, so it leaves five shared containers running — deliberately, see
+above — each holding roughly 200 MB of tmpfs. That is more than the siblings
+leave running, so plan on `rig prune` once you are done.
