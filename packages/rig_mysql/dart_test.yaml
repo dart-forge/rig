@@ -1,0 +1,8 @@
+tags:
+  integration:
+    # Needs a running Docker daemon, and a cold pull of MySQL can be slow.
+    # This is the only timeout that covers setUpAll, where the pull, create,
+    # start, initialisation and password re-hash actually happen — a
+    # `Timeout` annotation on a test body replaces this factor rather than
+    # composing with it, so putting one there does nothing for setUpAll.
+    timeout: 10x

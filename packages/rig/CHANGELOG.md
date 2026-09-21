@@ -1,3 +1,13 @@
+## 0.4.0
+
+- Container hashes are unchanged: no `ContainerSpec` field was added on this
+  branch, so containers from 0.3.0 keep being reused instead of left behind.
+- New: the suite marker rule and suite database naming that modules share are
+  now part of `module.dart`, so a module no longer carries its own copy.
+- Fixed: reading a suite marker no longer throws when another suite's teardown
+  removes it at the same moment. A marker that has gone means what an absent
+  one means.
+
 ## 0.3.0
 
 - `pruneContainers()` — the decision logic behind `rig prune` moved from

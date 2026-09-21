@@ -1,40 +1,27 @@
 import 'dart:io';
 
-import 'package:path/path.dart' as p;
 import 'package:rig/module.dart';
 import 'package:rig/rig.dart';
-
-/// How long a suite's marker is trusted before its database index is
-/// presumed abandoned and free for another suite to claim.
-///
-/// A day, against test runs measured in minutes — the same value and the
-/// same reasoning `rig_postgres` uses for its own marker: a marker younger
-/// than this protects its index unconditionally, because no age or
-/// connection check can tell a suite sitting between two connections from
-/// one that crashed. Unlike `rig_postgres`, there is no separate "how stale
-/// is the resource itself" threshold here: a suite database's name carries
-/// its creation minute, but a Redis index is just a number with no
-/// timestamp of its own, so the marker's own age is the only signal there
-/// is.
-const Duration defaultMarkerStaleAfter = Duration(hours: 24);
 
 /// Where the marker recording that a suite has claimed [index] inside
 /// [containerId] lives.
 ///
-/// Filed under [StateDir.markerDir]'s `'redis'` kind, which namespaces it
-/// from `rig_postgres`'s own markers rather than sharing a directory with
-/// them. The two protect different things — a suite database has a name
-/// unique to that suite, while a Redis index is one of a small fixed set of
-/// numbers the *next* suite on this same container is meant to reuse,
-/// reclaimed the moment a new suite needs it rather than on `rig prune`'s
-/// schedule — but `prune` itself sweeps every kind's container-id
-/// subdirectories the same way, without knowing what either kind means, so
-/// that difference never has to be a difference in where the marker lives.
+/// Filed under the `'redis'` kind, which namespaces it from the other
+/// modules' markers rather than sharing a directory with them. The two
+/// protect different things — a suite database has a name unique to that
+/// suite, while a Redis index is one of a small fixed set of numbers the
+/// *next* suite on this same container is meant to reuse, reclaimed the
+/// moment a new suite needs it rather than on `rig prune`'s schedule.
 File suiteIndexMarker({
   required StateDir stateDir,
   required String containerId,
   required int index,
-}) => File(p.join(stateDir.markerDir('redis').path, containerId, '$index'));
+}) => suiteMarkerFile(
+  stateDir: stateDir,
+  kind: 'redis',
+  containerId: containerId,
+  resource: '$index',
+);
 
 /// Every database index this container was started with is already claimed
 /// by a marker that has not gone stale.
@@ -104,6 +91,12 @@ final class RedisIndexNotFlushed extends RigException {
 /// a stale marker definitely carries a crashed suite's keys. Skipping the
 /// flush for an index that merely lacked a marker would leave that path
 /// unguarded.
+///
+/// Unlike `rig_postgres`, there is no separate "how stale is the resource
+/// itself" threshold here: a suite database's name carries its creation
+/// minute, but a Redis index is just a number with no timestamp of its own,
+/// so [markerStaleAfter] — the marker's own age — is the only signal there
+/// is.
 Future<int> claimSuiteIndex({
   required DockerEngine engine,
   required String containerId,
@@ -122,14 +115,12 @@ Future<int> claimSuiteIndex({
       containerId: containerId,
       index: index,
     );
-    if (marker.existsSync()) {
-      final age = now.toUtc().difference(marker.lastModifiedSync().toUtc());
-      // A marker within markerStaleAfter still protects its index, however
-      // long it has been since anyone connected — a suite between
-      // connections is exactly what the marker exists to protect. Only a
-      // marker older than this is presumed to belong to a suite that
-      // crashed before teardown ever ran.
-      if (age <= markerStaleAfter) continue;
+    if (markerStillClaims(
+      marker,
+      now: now,
+      markerStaleAfter: markerStaleAfter,
+    )) {
+      continue;
     }
     chosen = index;
     break;

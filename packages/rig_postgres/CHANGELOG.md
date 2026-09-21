@@ -1,3 +1,10 @@
+## 0.4.0
+
+- The suite marker rule and the database naming moved into `rig`; this package
+  now uses them. No API change.
+- Fixed along the way: reading a suite marker no longer throws when another
+  suite's teardown removes it at the same moment.
+
 ## 0.3.0
 
 No functional change in this package. It moves to `rig: ^0.3.0`, because

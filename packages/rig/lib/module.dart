@@ -20,3 +20,11 @@ export 'src/project.dart' show currentProjectName;
 // changes every hash, as adding networks and builds already did. What a module
 // may rely on is being able to ask whether two specs resolve to one container.
 export 'src/spec/spec_hash.dart' show specHash;
+export 'src/suite/suite_markers.dart'
+    show defaultMarkerStaleAfter, markerStillClaims, suiteMarkerFile;
+export 'src/suite/suite_naming.dart'
+    show
+        defaultStaleAfter,
+        isReclaimableSuiteDatabase,
+        newSuiteToken,
+        suiteDatabaseName;
